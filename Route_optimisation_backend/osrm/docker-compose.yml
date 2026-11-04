@@ -1,0 +1,9 @@
+services:
+  osrm:
+    image: osrm/osrm-backend:latest
+    command: osrm-routed --algorithm mld --max-table-size 10000 /data/central-zone-latest.osrm
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

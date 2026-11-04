@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+**/.venv/
+**/venv/
+**/node_modules/
+**/__pycache__/
+**/*.py[cod]
+**/cache/
+**/.idea/
+**/dist/
+*.log
+/Route_optimisation_backend/data/
+/Route_optimisation_backend/cache/

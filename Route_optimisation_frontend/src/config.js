@@ -1,0 +1,5 @@
+// export const API_URL = "http://192.168.1.185:5000/"
+// export const API_URL = "http://183.177.126.114:5001/"
+// export const API_URL = "http://103.241.147.6:5000/"
+// export const API_URL = "http://172.16.0.167:5000/"
+export const API_URL = "http://127.0.0.1:5001/"
