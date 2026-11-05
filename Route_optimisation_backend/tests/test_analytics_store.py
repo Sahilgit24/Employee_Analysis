@@ -190,6 +190,84 @@ class AnalyticsStoreTests(unittest.TestCase):
         self.assertEqual(dashboard["kpis"]["covered_houses"], 0)
         self.assertIsNone(dashboard["kpis"]["total_weight_kg"])
 
+    def test_combined_route_export_converts_explicit_tonne_weights_to_kilograms(self):
+        result = import_operational_records({
+            "vehicle_id": "TRUCK-WEIGHT",
+            "weight_unit": "tonnes",
+            "geofence": "20.0,78.0;20.0,78.1;20.1,78.1",
+            "houses": [],
+            "routes": [{
+                "date": "2025-09-30",
+                "emproute": [],
+                "Collectionlist": [],
+                "dumplist": [
+                    {
+                        "datetime": "2025-09-30T13:06:34",
+                        "totalGcWeight": 0.37,
+                        "totalDryWeight": 0.22,
+                        "totalWetWeight": 0.15,
+                    },
+                    {
+                        "datetime": "2025-09-30T13:24:51",
+                        "totalGcWeight": 0.35,
+                        "totalDryWeight": 0.10,
+                        "totalWetWeight": 0.25,
+                    },
+                    {
+                        "datetime": "2025-09-30T13:06:34",
+                        "totalGcWeight": 0.37,
+                        "totalDryWeight": 0.22,
+                        "totalWetWeight": 0.15,
+                    },
+                ],
+            }],
+        })
+
+        dashboard = get_dashboard({"vehicle_id": "TRUCK-WEIGHT"})
+        daily = dashboard["daily_performance"][0]
+
+        self.assertEqual(result["source_summary"]["dump_records_with_positive_weights"], 3)
+        self.assertEqual(daily["dumping_trips"], 2)
+        self.assertEqual(daily["garbage_weight_kg"], 720)
+        self.assertEqual(daily["dry_weight_kg"], 320)
+        self.assertEqual(daily["wet_weight_kg"], 400)
+        self.assertEqual(dashboard["daily_summary"]["total_garbage_weight_kg"], 720)
+        self.assertEqual(dashboard["daily_summary"]["weight_per_dumping_trip_kg"], 360)
+
+    def test_partial_recorded_dump_weight_is_available_when_another_trip_has_no_weight(self):
+        import_operational_records({
+            "dump_events": [
+                {
+                    "dump_id": "valid-weight",
+                    "vehicle_id": "V-1",
+                    "date": "2025-09-30",
+                    "total_weight": 5,
+                    "wet_weight": 2,
+                    "dry_weight": 3,
+                    "weight_unit": "kg",
+                },
+                {
+                    "dump_id": "unavailable-weight",
+                    "vehicle_id": "V-1",
+                    "date": "2025-09-30",
+                    "total_weight": 0,
+                    "wet_weight": 0,
+                    "dry_weight": 0,
+                    "weight_unit": "kg",
+                },
+            ],
+        })
+
+        dashboard = get_dashboard({"vehicle_id": "V-1"})
+        summary = dashboard["daily_summary"]
+
+        self.assertIsNone(summary["total_garbage_weight_kg"])
+        self.assertEqual(summary["recorded_garbage_weight_kg"], 5)
+        self.assertEqual(summary["dumping_trips"], 2)
+        self.assertEqual(summary["weighted_dump_trips"], 1)
+        self.assertEqual(summary["unweighted_dump_trips"], 1)
+        self.assertIsNone(summary["weight_per_dumping_trip_kg"])
+
     def test_combined_export_links_unique_house_ids_and_map_uses_period_records(self):
         result = import_operational_records({
             "vehicle_id": "TRUCK-7",
@@ -259,6 +337,13 @@ class AnalyticsStoreTests(unittest.TestCase):
         })
         dashboard = get_dashboard()
         self.assertEqual(dashboard["daily_summary"]["total_distance_km"], 0.01)
+        exact_daily_distance_m = sum(
+            row["distance_m"] for row in dashboard["daily_performance"]
+        )
+        rounded_daily_distance_m = sum(
+            row["distance_km"] * 1000 for row in dashboard["daily_performance"]
+        )
+        self.assertNotEqual(exact_daily_distance_m, rounded_daily_distance_m)
 
     def test_collection_counts_are_unique_by_day_and_attribution_warnings_are_scoped(self):
         import_operational_records({
@@ -341,12 +426,40 @@ class AnalyticsStoreTests(unittest.TestCase):
         self.assertEqual(rows["EMP-1"]["collection_ids_without_timestamps"], 1)
         self.assertEqual(rows["EMP-1"]["between_collection_interval_count"], 1)
         self.assertEqual(rows["EMP-1"]["average_between_collection_seconds"], 600)
+        self.assertEqual(rows["EMP-1"]["longest_between_collection_seconds"], 600)
         self.assertEqual(rows["EMP-2"]["average_between_collection_seconds"], 1200)
         self.assertEqual(performance["total_interval_count"], 2)
+        self.assertEqual(performance["average_between_collection_seconds"], 900)
+        self.assertEqual(performance["longest_between_collection_seconds"], 1200)
+        self.assertEqual(
+            performance["longest_between_collection_interval"]["vehicle_id"],
+            "EMP-2",
+        )
         self.assertEqual(
             get_dashboard({"vehicle_id": "EMP-1"})["daily_time_performance"]["total_interval_count"],
             1,
         )
+
+    def test_missing_dump_records_remain_unavailable_in_daily_and_period_metrics(self):
+        import_operational_records({
+            "gps_points": [
+                {"vehicle_id": "V-1", "timestamp": "2026-10-25T08:00:00",
+                 "lat": 20.0, "lon": 78.0},
+                {"vehicle_id": "V-1", "timestamp": "2026-10-25T08:05:00",
+                 "lat": 20.0001, "lon": 78.0},
+            ],
+            "collection_scans": [{
+                "scan_id": "S-1", "vehicle_id": "V-1", "date": "2026-10-25",
+                "reference_id": "H-1",
+            }],
+        })
+
+        dashboard = get_dashboard({"vehicle_id": "V-1"})
+
+        self.assertIsNone(dashboard["daily_performance"][0]["dumping_trips"])
+        self.assertIsNone(dashboard["daily_performance"][0]["weighted_dump_trips"])
+        self.assertIsNone(dashboard["daily_summary"]["dumping_trips"])
+        self.assertIsNone(dashboard["daily_summary"]["total_garbage_weight_kg"])
 
     def test_comparable_day_time_benchmark_uses_same_employee_and_selected_period(self):
         routes = []

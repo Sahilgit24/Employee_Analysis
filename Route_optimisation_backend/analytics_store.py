@@ -1193,6 +1193,9 @@ def _daily_time_metrics(connection, start_date, end_date, filters):
                 "duration_seconds": round(duration_seconds),
             })
         all_intervals.extend(intervals)
+        longest_interval = max(
+            intervals, key=lambda item: item["duration_seconds"]
+        ) if intervals else None
         collection_timestamps = [item[2] for item in timed_references]
         collection_span_seconds = (
             round(max(0, timed_references[-1][0] - timed_references[0][0]))
@@ -1224,9 +1227,16 @@ def _daily_time_metrics(connection, start_date, end_date, filters):
                 if collection_timestamps else None,
             "collection_span_seconds": collection_span_seconds,
             "between_collection_interval_count": len(intervals),
+            "total_between_collection_seconds": sum(
+                item["duration_seconds"] for item in intervals
+            ),
             "average_between_collection_seconds": round(
                 sum(item["duration_seconds"] for item in intervals) / len(intervals)
             ) if intervals else None,
+            "longest_between_collection_seconds": (
+                longest_interval["duration_seconds"] if longest_interval else None
+            ),
+            "longest_between_collection_interval": longest_interval,
         })
 
     by_employee = {}
@@ -1272,11 +1282,21 @@ def _daily_time_metrics(connection, start_date, end_date, filters):
                 actual_time - fastest["gps_observed_seconds"]
             )
 
+    longest_interval = max(
+        all_intervals, key=lambda item: item["duration_seconds"]
+    ) if all_intervals else None
     return {
         "daily": rows,
         "intervals": all_intervals[:2000],
         "total_interval_count": len(all_intervals),
         "intervals_truncated": len(all_intervals) > 2000,
+        "average_between_collection_seconds": round(
+            sum(item["duration_seconds"] for item in all_intervals) / len(all_intervals)
+        ) if all_intervals else None,
+        "longest_between_collection_seconds": (
+            longest_interval["duration_seconds"] if longest_interval else None
+        ),
+        "longest_between_collection_interval": longest_interval,
     }
 
 
@@ -1450,8 +1470,35 @@ def _historical_analytics(connection, start_date, end_date, filters):
             house_ids_by_date.setdefault(row["collection_date"], set()).add(row["house_id"])
     house_visit_days = set(house_ids_by_date) | house_collection_days
 
-    dump_by_date = {}
+    unique_dump_events = {}
     for dump in dumps:
+        dump_identity = tuple(
+            dump[column] for column in (
+                "dump_date", "vehicle_id", "trip_id", "reference_id",
+                "timestamp", "lat", "lon", "total_weight_raw",
+                "wet_weight_raw", "dry_weight_raw",
+            )
+        )
+        previous = unique_dump_events.get(dump_identity)
+        if previous is None:
+            unique_dump_events[dump_identity] = dump
+            continue
+        weight_columns = (
+            "total_weight_raw", "wet_weight_raw", "dry_weight_raw",
+        )
+        existing_has_valid_weight = any(
+            _optional_weight_kg(previous[column], previous["weight_unit"]) is not None
+            for column in weight_columns
+        )
+        current_has_valid_weight = any(
+            _optional_weight_kg(dump[column], dump["weight_unit"]) is not None
+            for column in weight_columns
+        )
+        if current_has_valid_weight and not existing_has_valid_weight:
+            unique_dump_events[dump_identity] = dump
+
+    dump_by_date = {}
+    for dump in unique_dump_events.values():
         item = dump_by_date.setdefault(dump["dump_date"], {
             "trips": 0,
             "total_weights": [],
@@ -1545,6 +1592,8 @@ def _historical_analytics(connection, start_date, end_date, filters):
             dry_weight = round(sum(dump["dry_weights"]), 2)
         daily_rows.append({
             "date": date,
+            "distance_m": gps["distance_m"]
+                if gps.get("valid_intervals", 0) else None,
             "distance_km": round(gps["distance_m"] / 1000, 2)
                 if gps.get("valid_intervals", 0) else None,
             "gps_observed_seconds": gps.get("operating_seconds", 0)
@@ -1554,11 +1603,11 @@ def _historical_analytics(connection, start_date, end_date, filters):
             "collection_scan_events": scan_events_by_date.get(date, 0),
             "houses_recorded_visited": len(house_ids_by_date.get(date, set()))
                 if date in house_visit_days else None,
-            "dumping_trips": dump["trips"] if dump else 0,
+            "dumping_trips": dump["trips"] if dump else None,
             "garbage_weight_kg": total_weight,
             "wet_weight_kg": wet_weight,
             "dry_weight_kg": dry_weight,
-            "weighted_dump_trips": len(dump["total_weights"]) if dump else 0,
+            "weighted_dump_trips": len(dump["total_weights"]) if dump else None,
             "dump_weights_complete": bool(
                 dump and dump["trips"] and total_weight is not None
             ),
@@ -1771,16 +1820,24 @@ def _historical_analytics(connection, start_date, end_date, filters):
     weight_days = [
         row for row in daily_rows if row["garbage_weight_kg"] is not None
     ]
-    total_dump_trips = sum(row["dumping_trips"] for row in daily_rows)
-    weighted_dump_trips = sum(row["weighted_dump_trips"] for row in daily_rows)
+    total_dump_trips = sum(
+        item["trips"] for item in dump_by_date.values()
+    ) if dump_by_date else None
+    weighted_dump_trips = sum(
+        len(item["total_weights"]) for item in dump_by_date.values()
+    ) if dump_by_date else None
     recorded_dump_weights = [
         weight for item in dump_by_date.values() for weight in item["total_weights"]
     ]
     all_dump_trips_weighted = (
-        total_dump_trips > 0
+        total_dump_trips is not None
+        and total_dump_trips > 0
         and sum(len(item["total_weights"]) for item in dump_by_date.values())
         == total_dump_trips
     )
+    total_garbage_weight_kg = round(sum(
+        row["garbage_weight_kg"] for row in weight_days
+    ), 2) if weight_days and all_dump_trips_weighted else None
     valid_day_distances_m = [
         gps_by_date[row["date"]]["distance_m"]
         for row in distance_days
@@ -1991,13 +2048,29 @@ def _historical_analytics(connection, start_date, end_date, filters):
             "dumping_trips": total_dump_trips,
             "weighted_dump_trips": weighted_dump_trips,
             "average_garbage_weight_per_dumping_trip_kg": average(recorded_dump_weights),
+            "recorded_garbage_weight_kg": (
+                round(sum(recorded_dump_weights), 2) if recorded_dump_weights else None
+            ),
+            "unweighted_dump_trips": (
+                total_dump_trips - weighted_dump_trips
+                if total_dump_trips is not None and weighted_dump_trips is not None
+                else None
+            ),
+            "weight_per_dumping_trip_kg": (
+                round(total_garbage_weight_kg / total_dump_trips, 2)
+                if total_garbage_weight_kg is not None
+                and total_dump_trips else None
+            ),
             "average_daily_garbage_weight_kg": average(
                 [row["garbage_weight_kg"] for row in weight_days]
             ),
             "weight_days_included": len(weight_days),
-            "total_garbage_weight_kg": round(sum(
-                row["garbage_weight_kg"] for row in weight_days
-            ), 2) if weight_days and all_dump_trips_weighted else None,
+            "total_garbage_weight_kg": total_garbage_weight_kg,
+            "garbage_weight_per_collected_house_kg": (
+                round(total_garbage_weight_kg / len(unique_visited_houses), 2)
+                if total_garbage_weight_kg is not None and unique_visited_houses
+                else None
+            ),
             "dump_weight_complete": bool(
                 total_dump_trips and all_dump_trips_weighted
             ),
@@ -2028,6 +2101,13 @@ def _historical_analytics(connection, start_date, end_date, filters):
             "houses_without_recorded_visit": not_recorded_houses[:500],
             "house_master_count": len(registered_houses),
             "visited_house_count": len(unique_visited_houses),
+            "collected_once_count": sum(
+                1 for row in reference_rows if row["collection_count"] == 1
+            ),
+            "collected_multiple_days_count": sum(
+                1 for row in reference_rows if row["collection_count"] > 1
+            ),
+            "houses_without_recorded_visit_count": len(not_recorded_houses),
             "verified_collection_record_count": sum(
                 1 for row in collection_rows if row["covered"]
             ),

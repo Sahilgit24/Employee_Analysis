@@ -132,10 +132,10 @@ function CollectionDayComparison({dates, references}) {
                     <td className="px-3 py-2">{recordedSecond ? "Recorded" : "No record"}</td>
                     <td className="px-3 py-2">
                         {recordedFirst && !recordedSecond
-                            ? `Recorded ${firstDate} only`
+                            ? `In ${firstDate} list only`
                             : recordedSecond && !recordedFirst
-                                ? `Recorded ${secondDate} only`
-                                : "Recorded both days"}
+                                ? `In ${secondDate} list only`
+                                : "In both daily lists"}
                     </td>
                 </tr>
             );
@@ -146,7 +146,7 @@ function CollectionDayComparison({dates, references}) {
             <div>
                 <h3 className="text-sm font-semibold text-slate-900">Compare collection lists by day</h3>
                 <p className="mt-1 text-xs text-slate-600">
-                    Compare House IDs recorded on either day. “No record” means the ID was not in that day’s imported collection list; it does not confirm the house was missed.
+                    The vehicle may collect from the same houses every day, so repeated House IDs are expected. This compares which IDs appear in each day’s list; differences can reflect the assigned area, route, or collection load and do not by themselves mean a house was missed.
                 </p>
             </div>
             {dates.length > 1 ? (
@@ -178,8 +178,14 @@ function CollectionDayComparison({dates, references}) {
                         <span className="rounded-full bg-blue-100 px-3 py-1 font-medium text-blue-800">
                             {formatNumber(secondHouseIds.size, 0)} recorded on {secondDate}
                         </span>
-                        <span className="rounded-full bg-amber-100 px-3 py-1 font-medium text-amber-800">
+                        <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700">
+                            {formatNumber([...firstHouseIds].filter((id) => secondHouseIds.has(id)).length, 0)} recorded on both days
+                        </span>
+                        <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700">
                             {formatNumber([...firstHouseIds].filter((id) => !secondHouseIds.has(id)).length, 0)} recorded on first day only
+                        </span>
+                        <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700">
+                            {formatNumber([...secondHouseIds].filter((id) => !firstHouseIds.has(id)).length, 0)} recorded on second day only
                         </span>
                     </div>
                     <DataTable
@@ -190,7 +196,7 @@ function CollectionDayComparison({dates, references}) {
                         maxHeight="20rem"
                     />
                     <p className="text-xs text-slate-500">
-                        The comparison uses House IDs that appear at least once in the selected employee’s imported collection lists. It is not a complete beat-house roster unless all houses are represented in those lists.
+                        The comparison uses House IDs that appear in the selected employee’s daily collection lists. It describes list overlap only; it is not a complete beat-house roster unless all houses are represented in those lists.
                     </p>
                 </>
             ) : (
@@ -372,30 +378,58 @@ function GeographicMap({data}) {
     );
 }
 
-function TravelHouseComparison({rows, metrics, quality, selectedEmployee}) {
+function TravelHouseComparison({rows, metrics, quality, selectedEmployee, timeByDate}) {
     const {highTravelLowCollection: flaggedDays} = getTravelCollectionSignals(rows);
     const maxDistance = Math.max(0, ...rows.map((row) => Number(row.distance_km) || 0));
     const maxHouses = Math.max(0, ...rows.map((row) => Number(row.houses_recorded_visited) || 0));
+    const maxTime = Math.max(0, ...rows.map((row) =>
+        Number(timeByDate.get(row.date)?.gps_observed_seconds) || 0
+    ));
+    const gpsTimeValues = [...timeByDate.values()]
+        .map((row) => row.gps_observed_seconds)
+        .filter((seconds) => seconds != null);
+    const totalGpsObservedSeconds = gpsTimeValues.reduce(
+        (total, seconds) => total + seconds, 0
+    );
+    const housesAvailable = Boolean(metrics.house_visits_available);
+    const housesPerKm = (
+        housesAvailable && metrics.total_distance_km > 0
+            ? metrics.total_unique_houses_recorded_visited / metrics.total_distance_km
+            : null
+    );
+    const housesPerHour = (
+        housesAvailable && totalGpsObservedSeconds > 0
+            ? metrics.total_unique_houses_recorded_visited
+                / (totalGpsObservedSeconds / 3600)
+            : null
+    );
     return (
         <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div>
-                <h2 className="text-lg font-semibold text-slate-900">4. Travel vs. House Collection</h2>
+                <h2 className="text-lg font-semibold text-slate-900">5. Collection Efficiency</h2>
                 <p className="text-xs text-slate-600">
-                    This compares recorded GPS distance with unique House IDs in collection lists. It is descriptive only and is not a direct measure of employee efficiency.
+                    These descriptive ratios compare recorded unique House IDs with GPS distance and time. They are not a direct measure of employee efficiency.
                 </p>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
                 <MetricCard label="Total GPS distance" value={metrics.total_distance_km == null ? "Unavailable" : `${formatNumber(metrics.total_distance_km)} km`}/>
-                <MetricCard label="Unique houses recorded" value={formatNumber(metrics.total_unique_houses_recorded_visited, 0)}/>
+                <MetricCard label="Unique houses recorded" value={housesAvailable
+                    ? formatNumber(metrics.total_unique_houses_recorded_visited, 0)
+                    : "Unavailable"}/>
                 <MetricCard label="Average recorded houses per day" value={metrics.average_daily_houses_recorded_visited == null ? "Unavailable" : formatNumber(metrics.average_daily_houses_recorded_visited, 0)}/>
+                <MetricCard label="Houses per km" value={housesPerKm == null ? "Unavailable" : formatNumber(housesPerKm, 2)}
+                    detail="Uses total unique recorded House IDs"/>
+                <MetricCard label="Houses per GPS-observed hour" value={housesPerHour == null ? "Unavailable" : formatNumber(housesPerHour, 1)}
+                    detail="GPS-observed time is not shift time"/>
                 <MetricCard label="Distance per recorded house" value={metrics.distance_per_recorded_house_km == null ? "Unavailable" : `${formatNumber(metrics.distance_per_recorded_house_km, 3)} km`}
                     detail="A descriptive ratio, not an efficiency score"/>
             </div>
             <section className="rounded-lg border bg-white p-4">
-                <h3 className="mb-2 text-sm font-semibold text-slate-800">Daily distance and recorded houses</h3>
+                <h3 className="mb-2 text-sm font-semibold text-slate-800">Daily distance, time and recorded houses</h3>
                 <div className="mb-2 flex gap-4 text-xs text-slate-600">
                     <span><span className="mr-1 inline-block h-2.5 w-2.5 bg-blue-600"/>Distance (km)</span>
                     <span><span className="mr-1 inline-block h-2.5 w-2.5 bg-teal-600"/>House IDs</span>
+                    <span><span className="mr-1 inline-block h-2.5 w-2.5 bg-violet-600"/>GPS time</span>
                 </div>
                 {!rows.length ? (
                     <p className="py-8 text-center text-sm text-slate-500">No daily travel or collection records for this selection.</p>
@@ -404,14 +438,16 @@ function TravelHouseComparison({rows, metrics, quality, selectedEmployee}) {
                         {rows.map((row) => {
                             const distance = row.distance_km;
                             const houses = row.houses_recorded_visited;
+                            const seconds = timeByDate.get(row.date)?.gps_observed_seconds;
                             const highTravelLowCollection = flaggedDays.some((day) => day.date === row.date);
                             return (
                                 <div key={row.date} className={`flex h-full min-w-14 flex-1 flex-col items-center justify-end gap-1 ${highTravelLowCollection ? "rounded-t bg-amber-50" : ""}`}
-                                    title={`${row.date}: ${distance == null ? "Distance unavailable" : `${formatNumber(distance)} km`}; ${houses == null ? "House count unavailable" : `${formatNumber(houses, 0)} houses`}`}>
-                                    <span className="text-[9px] text-slate-600">{distance == null ? "—" : `${formatNumber(distance)} km`}</span>
+                                    title={`${row.date}: ${distance == null ? "Distance unavailable" : `${formatNumber(distance)} km`}; ${seconds == null ? "Time unavailable" : formatDuration(seconds)}; ${houses == null ? "House count unavailable" : `${formatNumber(houses, 0)} houses`}`}>
+                                    <span className="text-[9px] text-slate-600">{seconds == null ? "—" : formatDuration(seconds)}</span>
                                     <div className="flex h-32 w-full items-end justify-center gap-1">
                                         <div className="w-3 rounded-t bg-blue-600" style={{height: `${maxDistance && distance != null ? Math.max(2, distance / maxDistance * 100) : 0}%`}}/>
                                         <div className="w-3 rounded-t bg-teal-600" style={{height: `${maxHouses && houses != null ? Math.max(2, houses / maxHouses * 100) : 0}%`}}/>
+                                        <div className="w-3 rounded-t bg-violet-600" style={{height: `${maxTime && seconds != null ? Math.max(2, seconds / maxTime * 100) : 0}%`}}/>
                                     </div>
                                     <span className="text-[9px] text-slate-600">{houses == null ? "—" : formatNumber(houses, 0)}</span>
                                     <span className="mb-1 max-w-16 truncate text-[9px] text-slate-600">{row.date}</span>
@@ -437,6 +473,118 @@ function TravelHouseComparison({rows, metrics, quality, selectedEmployee}) {
     );
 }
 
+function CollectionGapAnalysis({data, rows, timeByDate}) {
+    const longest = data?.longest_between_collection_interval;
+    const baselineCounts = rows
+        .map((item) => item.houses_recorded_visited)
+        .filter((count) => count != null);
+    const sortedCounts = baselineCounts.slice().sort((a, b) => a - b);
+    const middle = Math.floor(sortedCounts.length / 2);
+    const median = sortedCounts.length
+        ? (sortedCounts.length % 2
+            ? sortedCounts[middle]
+            : (sortedCounts[middle - 1] + sortedCounts[middle]) / 2)
+        : null;
+    const tableRows = rows.map((row) => {
+        const time = timeByDate.get(row.date);
+        const houses = row.houses_recorded_visited;
+        const lowActivity = houses != null && (
+            houses === 0 || (median != null && median > 0 && houses < median * 0.5)
+        );
+        return (
+            <tr key={row.date} className="border-b last:border-0">
+                <td className="py-2 pr-3">{row.date}</td>
+                <td className="py-2 pr-3">{houses == null ? "Unavailable" : formatNumber(houses, 0)}</td>
+                <td className="py-2 pr-3">{formatDuration(time?.average_between_collection_seconds)}</td>
+                <td className="py-2 pr-3">{formatDuration(time?.longest_between_collection_seconds)}</td>
+                <td className="py-2 pr-3">{time?.between_collection_interval_count == null
+                    ? "Unavailable"
+                    : formatNumber(time.between_collection_interval_count, 0)}</td>
+                <td className="py-2">{houses == null
+                    ? "Unavailable"
+                    : lowActivity ? "Low recorded activity" : "No low-activity flag"}</td>
+            </tr>
+        );
+    });
+
+    return (
+        <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div>
+                <h2 className="text-lg font-semibold text-slate-900">6. Collection Gap Analysis</h2>
+                <p className="text-xs text-slate-600">
+                    Gaps are elapsed time between timestamped unique House IDs on the same employee-day. They may include travel, stops, or missing scans; they do not prove wasted time.
+                </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+                <MetricCard label="Average gap between records"
+                    value={formatDuration(data?.average_between_collection_seconds)}
+                    detail={`${formatNumber(data?.total_interval_count, 0)} timestamped interval(s)`}/>
+                <MetricCard label="Longest gap between records"
+                    value={formatDuration(data?.longest_between_collection_seconds)}
+                    detail={longest
+                        ? `${longest.date} · ${longest.from_house_id} to ${longest.to_house_id} (${longest.vehicle_id || "Employee unavailable"})`
+                        : "Requires at least two unique timestamped House IDs in one employee-day"}/>
+            </div>
+            <DataTable
+                headers={["Date", "Houses recorded", "Average collection gap", "Longest collection gap", "Timed intervals", "Activity check"]}
+                rows={tableRows}
+                emptyMessage="No daily collection records are available in this period."
+                minWidth="850px"
+                maxHeight="24rem"
+            />
+            <p className="text-xs text-slate-500">
+                “Low recorded activity” means zero recorded House IDs or less than half the selected-period median. It is a prompt to check the records and context, not a performance judgment. Missing counts remain unavailable.
+            </p>
+        </section>
+    );
+}
+
+function DailyPerformanceSummary({rows, timeByDate}) {
+    const tableRows = rows.map((row) => {
+        const seconds = timeByDate.get(row.date)?.gps_observed_seconds;
+        const houses = row.houses_recorded_visited;
+        const distanceKm = row.distance_m == null
+            ? row.distance_km
+            : row.distance_m / 1000;
+        const housesPerHour = houses != null && seconds > 0
+            ? houses / (seconds / 3600)
+            : null;
+        const housesPerKm = houses != null && distanceKm > 0
+            ? houses / distanceKm
+            : null;
+        return (
+            <tr key={row.date} className="border-b last:border-0">
+                <td className="py-2 pr-3">{row.date}</td>
+                <td className="py-2 pr-3">{distanceKm == null ? "Unavailable" : `${formatNumber(distanceKm, 2)} km`}</td>
+                <td className="py-2 pr-3">{formatDuration(seconds)}</td>
+                <td className="py-2 pr-3">{houses == null ? "Unavailable" : formatNumber(houses, 0)}</td>
+                <td className="py-2 pr-3">{housesPerHour == null ? "Unavailable" : formatNumber(housesPerHour, 1)}</td>
+                <td className="py-2 pr-3">{housesPerKm == null ? "Unavailable" : formatNumber(housesPerKm, 2)}</td>
+                <td className="py-2 pr-3">{formatNumber(row.dumping_trips, 0)}</td>
+                <td className="py-2">{formatWeight(row.garbage_weight_kg)}</td>
+            </tr>
+        );
+    });
+
+    return (
+        <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div>
+                <h2 className="text-lg font-semibold text-slate-900">7. Daily Performance Summary</h2>
+                <p className="text-xs text-slate-600">
+                    One row per date in the selected reporting period. Ratios are unavailable when their source data or denominator is missing.
+                </p>
+            </div>
+            <DataTable
+                headers={["Date", "Distance", "Time", "Houses Collected", "Houses/Hour", "Houses/Km", "Dumping Trips", "Garbage Weight"]}
+                rows={tableRows}
+                emptyMessage="No daily records are available in this reporting period."
+                minWidth="1050px"
+                maxHeight="28rem"
+            />
+        </section>
+    );
+}
+
 function formatDuration(seconds) {
     if (seconds == null) return "Unavailable";
     if (Number(seconds) < 60) return `${Math.round(Number(seconds))}s`;
@@ -452,6 +600,17 @@ function TimeAnalysis({data}) {
     const observedSeconds = dailyRows.reduce(
         (total, row) => total + (row.gps_observed_seconds || 0), 0
     );
+    const observedByDate = new Map();
+    dailyRows.forEach((row) => {
+        if (row.gps_observed_seconds == null) return;
+        observedByDate.set(
+            row.date,
+            (observedByDate.get(row.date) || 0) + row.gps_observed_seconds
+        );
+    });
+    const averageDailyObservedSeconds = observedByDate.size
+        ? observedSeconds / observedByDate.size
+        : null;
     const benchmarkDays = dailyRows.filter((row) => row.benchmark_time_seconds != null).length;
     const rows = dailyRows.map((row) => (
         <tr key={`${row.date}-${row.vehicle_id}`} className="border-b last:border-0">
@@ -497,10 +656,21 @@ function TimeAnalysis({data}) {
                     GPS times help compare recorded activity between days. They are estimates, not official shift hours.
                 </p>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                 <MetricCard label="GPS time counted" value={dailyRows.some((row) => row.gps_observed_seconds != null)
                     ? formatDuration(observedSeconds) : "Unavailable"}
                     detail="Adds GPS gaps up to 15 minutes; longer gaps are left out"/>
+                <MetricCard label="Average GPS time per day"
+                    value={formatDuration(averageDailyObservedSeconds)}
+                    detail="For all selected employees on each recorded date"/>
+                <MetricCard label="Average collection gap"
+                    value={formatDuration(data?.average_between_collection_seconds)}
+                    detail="Between timestamped unique House IDs"/>
+                <MetricCard label="Longest collection gap"
+                    value={formatDuration(data?.longest_between_collection_seconds)}
+                    detail={data?.longest_between_collection_interval
+                        ? `${data.longest_between_collection_interval.date}: ${data.longest_between_collection_interval.from_house_id} to ${data.longest_between_collection_interval.to_house_id}`
+                        : "Requires two timestamped House IDs in one employee-day"}/>
                 <MetricCard label="Days with a comparable-time benchmark"
                     value={formatNumber(benchmarkDays, 0)}
                     detail="Days with enough similar records to compare"/>
@@ -644,6 +814,577 @@ function ImprovementSuggestions({rows, metrics, quality, selectedEmployee}) {
     );
 }
 
+function addDays(date, days) {
+    const value = new Date(`${date}T00:00:00Z`);
+    value.setUTCDate(value.getUTCDate() + days);
+    return value.toISOString().slice(0, 10);
+}
+
+function averageValue(values) {
+    return values.length
+        ? values.reduce((total, value) => total + value, 0) / values.length
+        : null;
+}
+
+function medianValue(values) {
+    if (!values.length) return null;
+    const sorted = values.slice().sort((left, right) => left - right);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2
+        ? sorted[middle]
+        : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function coefficientOfVariation(values) {
+    const mean = averageValue(values);
+    if (values.length < 3 || mean == null || mean === 0) return null;
+    const variance = averageValue(values.map((value) => (value - mean) ** 2));
+    return Math.sqrt(variance) / mean * 100;
+}
+
+function getProgressTrend(previous, current, higherIsBetter) {
+    if (previous == null || current == null) return "unavailable";
+    if (previous === 0) {
+        if (current === 0) return "stable";
+        return (higherIsBetter ? current > previous : current < previous)
+            ? "improving"
+            : "worsening";
+    }
+    const relativeChange = (current - previous) / Math.abs(previous);
+    if (Math.abs(relativeChange) <= 0.1) return "stable";
+    const increased = relativeChange > 0;
+    return increased === higherIsBetter ? "improving" : "worsening";
+}
+
+function getProgressWindow(rows, timeByDate, history, endDate, days = 7) {
+    const currentStart = addDays(endDate, -(days - 1));
+    const previousEnd = addDays(currentStart, -1);
+    const previousStart = addDays(previousEnd, -(days - 1));
+    const inWindow = (row, start, end) => row.date >= start && row.date <= end;
+    const previousRows = rows.filter((row) => inWindow(row, previousStart, previousEnd));
+    const currentRows = rows.filter((row) => inWindow(row, currentStart, endDate));
+
+    const getComparison = (previousValues, currentValues, higherIsBetter) => {
+        const previous = previousValues.length >= 3 ? averageValue(previousValues) : null;
+        const current = currentValues.length >= 3 ? averageValue(currentValues) : null;
+        return {
+            previous,
+            current,
+            previousDays: previousValues.length,
+            currentDays: currentValues.length,
+            trend: getProgressTrend(previous, current, higherIsBetter),
+        };
+    };
+
+    const collection = getComparison(
+        previousRows
+            .filter((row) => row.houses_recorded_visited != null)
+            .map((row) => row.houses_recorded_visited),
+        currentRows
+            .filter((row) => row.houses_recorded_visited != null)
+            .map((row) => row.houses_recorded_visited),
+        true,
+    );
+    const previousConsistencyValues = previousRows
+        .map((row) => row.houses_recorded_visited)
+        .filter((value) => value != null);
+    const currentConsistencyValues = currentRows
+        .map((row) => row.houses_recorded_visited)
+        .filter((value) => value != null);
+    const previousConsistency = previousConsistencyValues.length >= 3
+        ? coefficientOfVariation(previousConsistencyValues)
+        : null;
+    const currentConsistency = currentConsistencyValues.length >= 3
+        ? coefficientOfVariation(currentConsistencyValues)
+        : null;
+    const consistency = {
+        previous: previousConsistency,
+        current: currentConsistency,
+        previousDays: previousConsistencyValues.length,
+        currentDays: currentConsistencyValues.length,
+        trend: getProgressTrend(previousConsistency, currentConsistency, false),
+    };
+    const getDailyHouseRatios = (periodRows) => periodRows
+        .filter((row) => row.houses_recorded_visited != null)
+        .map((row) => {
+            const distanceM = row.distance_m ?? (
+                row.distance_km == null ? null : row.distance_km * 1000
+            );
+            return distanceM > 0
+                ? row.houses_recorded_visited / (distanceM / 1000)
+                : null;
+        })
+        .filter((value) => value != null);
+    const travel = getComparison(
+        getDailyHouseRatios(previousRows),
+        getDailyHouseRatios(currentRows),
+        true,
+    );
+    const getDailyGaps = (periodRows) => periodRows
+        .map((row) => timeByDate.get(row.date)?.average_between_collection_seconds)
+        .filter((value) => value != null);
+    const gaps = getComparison(
+        getDailyGaps(previousRows),
+        getDailyGaps(currentRows),
+        false,
+    );
+
+    let houseCoverage = {
+        previous: null, current: null, previousDays: 0, currentDays: 0,
+        trend: "unavailable",
+    };
+    if (history.house_master_available && history.house_master_count > 0) {
+        const recordedHouseCount = (start, end) => new Set(
+            (history.reference_ids || []).flatMap((reference) =>
+                (reference.collection_dates || [])
+                    .filter((date) => date >= start && date <= end)
+                    .map(() => reference.house_id)
+            )
+        ).size;
+        const previousCount = recordedHouseCount(previousStart, previousEnd);
+        const currentCount = recordedHouseCount(currentStart, endDate);
+        const previousCoverageDays = previousRows.filter(
+            (row) => row.houses_recorded_visited != null
+        ).length;
+        const currentCoverageDays = currentRows.filter(
+            (row) => row.houses_recorded_visited != null
+        ).length;
+        const previousCoverage = previousCoverageDays >= 3
+            ? previousCount / history.house_master_count * 100
+            : null;
+        const currentCoverage = currentCoverageDays >= 3
+            ? currentCount / history.house_master_count * 100
+            : null;
+        houseCoverage = {
+            previous: previousCoverage,
+            current: currentCoverage,
+            previousDays: previousCoverageDays,
+            currentDays: currentCoverageDays,
+            trend: getProgressTrend(
+                previousCoverage,
+                currentCoverage,
+                true,
+            ),
+        };
+    }
+
+    const previousLongestGaps = previousRows
+        .map((row) => timeByDate.get(row.date)?.longest_between_collection_seconds)
+        .filter((value) => value != null);
+    const currentLongestGaps = currentRows
+        .map((row) => timeByDate.get(row.date)?.longest_between_collection_seconds)
+        .filter((value) => value != null);
+    const getQuartile = (values, percentile) => {
+        if (!values.length) return null;
+        const sorted = values.slice().sort((left, right) => left - right);
+        return sorted[Math.floor((sorted.length - 1) * percentile)];
+    };
+    const baselineMedianGap = previousLongestGaps.length >= 3
+        ? medianValue(previousLongestGaps)
+        : null;
+    const baselineIqrGap = previousLongestGaps.length >= 3
+        ? getQuartile(previousLongestGaps, 0.75) - getQuartile(previousLongestGaps, 0.25)
+        : null;
+    const longGapThreshold = baselineMedianGap == null
+        ? null
+        : baselineMedianGap + 1.5 * (baselineIqrGap || 0);
+    const recurringLongGapDates = longGapThreshold == null
+        || currentLongestGaps.length < 3
+        ? []
+        : currentRows.filter((row) => {
+            const longest = timeByDate.get(row.date)?.longest_between_collection_seconds;
+            return longest != null && longest > longGapThreshold;
+        }).map((row) => row.date);
+
+    const previousHouseValues = previousRows
+        .map((row) => row.houses_recorded_visited)
+        .filter((value) => value != null);
+    const currentHouseValues = currentRows
+        .map((row) => row.houses_recorded_visited)
+        .filter((value) => value != null);
+    const previousHouseMedian = medianValue(previousHouseValues);
+    const lowCollectionDates = previousHouseMedian == null || previousHouseMedian <= 0
+        || previousHouseValues.length < 3 || currentHouseValues.length < 3
+        ? []
+        : currentRows.filter((row) =>
+            row.houses_recorded_visited != null
+            && row.houses_recorded_visited < previousHouseMedian * 0.5
+        ).map((row) => row.date);
+
+    return {
+        startDate: previousStart,
+        previousEnd,
+        currentStart,
+        endDate,
+        previousRows,
+        currentRows,
+        metrics: [
+            {key: "collection", label: "Collection activity", unit: "houses/day", ...collection},
+            {key: "consistency", label: "Collection consistency", unit: "% variation", ...consistency},
+            {key: "coverage", label: "House coverage", unit: "% of known roster", ...houseCoverage},
+            {key: "travel", label: "Travel efficiency", unit: "houses/km", ...travel},
+            {key: "gaps", label: "Activity gaps", unit: "seconds", ...gaps},
+        ],
+        recurringLongGapDates,
+        lowCollectionDates,
+        currentGapDays: currentLongestGaps.length,
+        currentCollectionDays: currentHouseValues.length,
+    };
+}
+
+function getOverallProgressStatus(snapshot) {
+    if (!snapshot) return "Insufficient Data";
+    const groups = new Map();
+    snapshot.metrics.forEach((metric) => {
+        const group = metric.key === "collection" || metric.key === "consistency"
+            ? "collection"
+            : metric.key === "coverage"
+                ? "coverage"
+                : metric.key === "travel"
+                    ? "travel"
+                    : "activity";
+        if (metric.trend !== "unavailable") {
+            groups.set(group, [...(groups.get(group) || []), metric.trend]);
+        }
+    });
+    const groupTrends = [...groups.values()].map((trends) => {
+        const uniqueTrends = new Set(trends);
+        if (uniqueTrends.size === 1) return trends[0];
+        if (uniqueTrends.has("improving") && uniqueTrends.has("worsening")) return "mixed";
+        if (uniqueTrends.has("improving")) return "improving";
+        if (uniqueTrends.has("worsening")) return "worsening";
+        return "stable";
+    });
+    if (groupTrends.length < 2) return "Insufficient Data";
+    const improving = groupTrends.filter((trend) => trend === "improving").length;
+    const worsening = groupTrends.filter((trend) => trend === "worsening").length;
+    const mixed = groupTrends.filter((trend) => trend === "mixed").length;
+    if (worsening >= 2 && improving === 0 && mixed === 0) return "Declining";
+    if (snapshot.recurringLongGapDates.length >= 2
+        || snapshot.lowCollectionDates.length >= 2
+        || mixed > 0
+        || (improving > 0 && worsening > 0)
+        || (worsening >= 2 && improving < 2)) {
+        return "Needs Attention";
+    }
+    if (improving >= 2 && worsening <= 1 && mixed === 0) return "Improving";
+    return "Stable";
+}
+
+function displayProgressValue(metric, value) {
+    if (value == null) return "Unavailable";
+    if (metric.key === "gaps") return formatDuration(value);
+    return `${formatNumber(value, metric.key === "collection" ? 0 : 1)} ${metric.unit}`;
+}
+
+function ProgressBar({metric}) {
+    if (metric.previous == null || metric.current == null) {
+        return <span className="text-xs text-slate-500">Unavailable</span>;
+    }
+    const maximum = Math.max(metric.previous, metric.current, 0);
+    const previousWidth = maximum ? Math.max(4, metric.previous / maximum * 100) : 4;
+    const currentWidth = maximum ? Math.max(4, metric.current / maximum * 100) : 4;
+    const statusText = {
+        improving: "↑ Improving",
+        stable: "→ Stable",
+        worsening: "↓ Worsening",
+        unavailable: "Unavailable",
+    }[metric.trend];
+    return (
+        <div className="min-w-40 space-y-1">
+            <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                    <span className="w-16 text-[10px] text-slate-500">Previous</span>
+                    <span className="block h-2 rounded bg-slate-300" style={{width: `${previousWidth}%`}}/>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="w-16 text-[10px] text-slate-500">Current</span>
+                    <span className={`block h-2 rounded ${metric.trend === "improving" ? "bg-emerald-500" : metric.trend === "worsening" ? "bg-rose-500" : "bg-blue-500"}`}
+                        style={{width: `${currentWidth}%`}}/>
+                </div>
+            </div>
+            <p className="text-xs font-medium text-slate-700">{statusText}</p>
+        </div>
+    );
+}
+
+function EmployeeProgressAnalysis({rows, timeByDate, history, selectedEmployee}) {
+    const eligibleRows = selectedEmployee ? rows : [];
+    const timeline = [];
+    if (eligibleRows.length) {
+        const firstCheckpoint = addDays(eligibleRows[0].date, 13);
+        const lastDate = eligibleRows[eligibleRows.length - 1].date;
+        if (lastDate >= firstCheckpoint) {
+            for (let checkpoint = firstCheckpoint; checkpoint <= lastDate;
+                checkpoint = addDays(checkpoint, 7)) {
+                timeline.push(getProgressWindow(
+                    eligibleRows, timeByDate, history, checkpoint
+                ));
+            }
+            const latestCheckpoint = timeline[timeline.length - 1]?.endDate;
+            if (latestCheckpoint !== lastDate) {
+                timeline.push(getProgressWindow(
+                    eligibleRows, timeByDate, history, lastDate
+                ));
+            }
+        }
+    }
+    const currentSnapshot = timeline[timeline.length - 1];
+    const overallStatus = getOverallProgressStatus(currentSnapshot);
+    const timelineStatuses = timeline
+        .map((snapshot) => ({
+            date: snapshot.endDate,
+            status: getOverallProgressStatus(snapshot),
+        }))
+        .filter((point) => point.status !== "Insufficient Data");
+    const firstTimelineStatus = timelineStatuses[0];
+    const currentTimelineStatus = timelineStatuses[timelineStatuses.length - 1];
+    const progressSnapshot = currentSnapshot || {
+        metrics: [
+            {key: "collection", label: "Collection activity", unit: "houses/day", previous: null, current: null, trend: "unavailable"},
+            {key: "consistency", label: "Collection consistency", unit: "% variation", previous: null, current: null, trend: "unavailable"},
+            {key: "coverage", label: "House coverage", unit: "% of known roster", previous: null, current: null, trend: "unavailable"},
+            {key: "travel", label: "Travel efficiency", unit: "houses/km", previous: null, current: null, trend: "unavailable"},
+            {key: "gaps", label: "Activity gaps", unit: "seconds", previous: null, current: null, trend: "unavailable"},
+        ],
+        recurringLongGapDates: [],
+        lowCollectionDates: [],
+        currentGapDays: 0,
+        currentCollectionDays: 0,
+        currentRows: [],
+    };
+    const strengths = [];
+    const areas = [];
+    const recommendations = [];
+    if (currentSnapshot) {
+        currentSnapshot.metrics.forEach((metric) => {
+            if (metric.key === "coverage" && metric.trend === "unavailable") return;
+            if (metric.trend === "improving") {
+                strengths.push(`${metric.label} improved compared with the employee’s previous week.`);
+            } else if (metric.trend === "worsening") {
+                const priority = metric.key === "collection" || metric.key === "gaps" ? "High" : "Medium";
+                const observation = metric.key === "gaps"
+                    ? "Average time between timestamped House IDs increased."
+                    : metric.key === "collection"
+                        ? "Average daily recorded House IDs decreased."
+                        : metric.key === "travel"
+                            ? "GPS distance per recorded House ID increased."
+                            : "Day-to-day variation in recorded House IDs increased.";
+                areas.push({area: metric.label, observation, priority});
+            } else if (metric.trend === "stable") {
+                strengths.push(`${metric.label} remained stable against the employee’s previous week.`);
+            }
+        });
+        if (currentSnapshot.recurringLongGapDates.length >= 2) {
+            areas.push({
+                area: "Recurring collection gaps",
+                observation: `Longer-than-usual gaps appeared on ${currentSnapshot.recurringLongGapDates.length} recent recorded day(s), based on this employee’s previous-period pattern.`,
+                priority: currentSnapshot.recurringLongGapDates.length >= 3 ? "High" : "Medium",
+            });
+        }
+        if (currentSnapshot.lowCollectionDates.length >= 2) {
+            areas.push({
+                area: "Low recorded collection activity",
+                observation: `${currentSnapshot.lowCollectionDates.length} recent day(s) had fewer than half the employee’s previous-week median House IDs.`,
+                priority: "High",
+            });
+        }
+    }
+    if (areas.some((area) => area.area.includes("gap"))) {
+        recommendations.push("Review the dates with longer-than-usual intervals and confirm route context and timestamp completeness before interpreting them as delays.");
+    }
+    if (areas.some((area) => area.area.includes("collection") || area.area.includes("House"))) {
+        recommendations.push("Review daily collection lists alongside assigned area, route, and collection load; day-to-day House ID counts alone do not prove a missed visit.");
+    }
+    if (areas.some((area) => area.area.includes("Travel"))) {
+        recommendations.push("Compare GPS distance per recorded House ID with this employee’s earlier period and verify route changes; these records cannot identify unnecessary travel by themselves.");
+    }
+    if (areas.some((area) => area.area.includes("consistency") || area.area.includes("Consistency"))) {
+        recommendations.push("Check whether daily variation reflects legitimate workload or area changes, and confirm the GPS and collection uploads are complete.");
+    }
+    if (currentSnapshot?.metrics.some((metric) =>
+        metric.key === "coverage" && metric.trend === "unavailable"
+    )) {
+        recommendations.push("Provide a verified assigned-house roster if management needs a true house-coverage percentage.");
+    }
+    if (!recommendations.length && overallStatus === "Insufficient Data") {
+        recommendations.push("Keep uploading complete daily GPS and House ID records. At least three recorded days in each comparison week are needed to identify a personal trend.");
+    } else if (!recommendations.length) {
+        recommendations.push("Continue reviewing records against the employee’s own history; no specific deterioration was detected in the comparable measures.");
+    }
+
+    return (
+        <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div>
+                <h2 className="text-lg font-semibold text-slate-900">9. Employee Progress & Development</h2>
+                <p className="mt-1 text-xs text-slate-600">
+                    Personal trend summary for {selectedEmployee || "the selected employee"}. Comparisons use the latest 7 calendar days versus the preceding 7 days in the selected reporting period.
+                </p>
+                {currentSnapshot && (
+                    <p className="mt-1 text-xs text-slate-500">
+                        Previous: {currentSnapshot.startDate} to {currentSnapshot.previousEnd}
+                        {" · "}Current: {currentSnapshot.currentStart} to {currentSnapshot.endDate}
+                    </p>
+                )}
+            </div>
+            {!selectedEmployee ? (
+                <p className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    Select one employee to view an individual progress status. Combining employees would not be a fair personal-history comparison.
+                </p>
+            ) : (
+                <>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Overall employee status</p>
+                        <p className="mt-1 text-2xl font-bold text-slate-900">Employee Performance: {overallStatus}</p>
+                        <p className="mt-2 text-sm text-slate-700">
+                            {overallStatus === "Insufficient Data"
+                                ? "At least two independent measures, each with three recorded days in both comparison weeks, are needed for a reliable personal comparison."
+                                : overallStatus === "Improving"
+                                ? "Several measured areas are improving against this employee’s previous week."
+                                : overallStatus === "Declining"
+                                    ? "Several measured areas are worsening against this employee’s previous week."
+                                    : overallStatus === "Needs Attention"
+                                        ? "Some measures or recurring patterns need a management review against the employee’s route and records."
+                                        : "Measured activity is broadly stable against this employee’s previous week."}
+                            {" "}House coverage is {progressSnapshot.metrics.find((metric) => metric.key === "coverage")?.trend === "unavailable"
+                                ? "unavailable because a verified assigned-house roster is not available."
+                                : "based only on the verified house roster."}
+                        </p>
+                    </div>
+
+                    <div className="grid gap-4 xl:grid-cols-2">
+                        <section className="space-y-2">
+                            <h3 className="text-sm font-semibold text-slate-800">Employee Strengths</h3>
+                            {strengths.length ? (
+                                <ul className="list-disc space-y-1 rounded-lg border border-emerald-200 bg-emerald-50 p-4 pl-8 text-sm text-emerald-900">
+                                    {strengths.map((strength) => <li key={strength}>{strength}</li>)}
+                                </ul>
+                            ) : (
+                                <p className="rounded-lg border bg-slate-50 p-4 text-sm text-slate-600">
+                                    {overallStatus === "Insufficient Data"
+                                        ? "Insufficient comparable data to identify strengths."
+                                        : "No clear improvement or stable measure can be highlighted from these periods."}
+                                </p>
+                            )}
+                        </section>
+                        <section className="space-y-2">
+                            <h3 className="text-sm font-semibold text-slate-800">Areas Requiring Improvement</h3>
+                            <DataTable
+                                headers={["Area", "Observation", "Priority"]}
+                                rows={areas.map((area) => (
+                                    <tr key={area.area} className="border-b last:border-0">
+                                        <td className="py-2 pr-3 font-medium">{area.area}</td>
+                                        <td className="py-2 pr-3">{area.observation}</td>
+                                        <td className="py-2">{area.priority}</td>
+                                    </tr>
+                                ))}
+                                emptyMessage={overallStatus === "Insufficient Data"
+                                    ? "Insufficient comparable data to identify an improvement area."
+                                    : "No recurring or worsening area was identified from the comparable data."}
+                                minWidth="540px"
+                                maxHeight="16rem"
+                            />
+                        </section>
+                    </div>
+
+                    <section className="space-y-2">
+                        <h3 className="text-sm font-semibold text-slate-800">Progress Tracking</h3>
+                        <DataTable
+                            headers={["Area", "Previous period", "Current period", "Progress"]}
+                            rows={progressSnapshot.metrics.map((metric) => (
+                                <tr key={metric.key} className="border-b last:border-0">
+                                    <td className="py-2 pr-3 font-medium">{metric.label}</td>
+                                    <td className="py-2 pr-3">{displayProgressValue(metric, metric.previous)}</td>
+                                    <td className="py-2 pr-3">{displayProgressValue(metric, metric.current)}</td>
+                                    <td className="py-2"><ProgressBar metric={metric}/></td>
+                                </tr>
+                            ))}
+                            emptyMessage="No comparable measures are available."
+                            minWidth="800px"
+                            maxHeight="20rem"
+                        />
+                    </section>
+
+                    <section className="space-y-2">
+                        <h3 className="text-sm font-semibold text-slate-800">Employee Progress Timeline</h3>
+                        {timeline.length ? (
+                            <div className="flex gap-3 overflow-x-auto pb-2">
+                                {timeline.slice(-8).map((snapshot) => {
+                                    const status = getOverallProgressStatus(snapshot);
+                                    const color = status === "Improving" ? "bg-emerald-100 text-emerald-800"
+                                        : status === "Declining" ? "bg-rose-100 text-rose-800"
+                                            : status === "Needs Attention" ? "bg-amber-100 text-amber-900"
+                                                : status === "Stable" ? "bg-blue-100 text-blue-800"
+                                                    : "bg-slate-100 text-slate-700";
+                                    return (
+                                        <article key={snapshot.endDate} className="min-w-40 rounded-lg border bg-white p-3">
+                                            <p className="text-xs text-slate-500">{snapshot.endDate}</p>
+                                            <p className={`mt-2 inline-flex rounded-full px-2 py-1 text-xs font-semibold ${color}`}>
+                                                {status}
+                                            </p>
+                                        </article>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <p className="rounded border bg-slate-50 p-3 text-sm text-slate-600">
+                                More date history is needed to build a progress timeline.
+                            </p>
+                        )}
+                        <p className="text-xs text-slate-500">
+                            Each timeline point compares its 7-day period with the preceding 7 days. It shows direction over time, not an absolute employee rating.
+                        </p>
+                        {firstTimelineStatus && currentTimelineStatus && (
+                            <p className="text-sm font-medium text-slate-700">
+                                Progress: {firstTimelineStatus.status === currentTimelineStatus.status
+                                    ? `status has remained ${currentTimelineStatus.status} across comparable checkpoints`
+                                    : `moved from ${firstTimelineStatus.status} on ${firstTimelineStatus.date} to ${currentTimelineStatus.status} on ${currentTimelineStatus.date}`}.
+                            </p>
+                        )}
+                    </section>
+
+                    <div className="grid gap-4 xl:grid-cols-2">
+                        <section className="space-y-2">
+                            <h3 className="text-sm font-semibold text-slate-800">Recurring Issues</h3>
+                            <ul className="space-y-2 text-sm">
+                                {progressSnapshot.recurringLongGapDates.length >= 2 && (
+                                    <li className="rounded border border-amber-200 bg-amber-50 p-3">
+                                        <strong>Long collection gaps — {progressSnapshot.recurringLongGapDates.length} of {progressSnapshot.currentGapDays} recent day(s) with timed intervals.</strong>
+                                        {" "}These were longer than the employee’s own earlier pattern.
+                                    </li>
+                                )}
+                                {progressSnapshot.lowCollectionDates.length >= 2 && (
+                                    <li className="rounded border border-amber-200 bg-amber-50 p-3">
+                                        <strong>Lower recorded collection activity — {progressSnapshot.lowCollectionDates.length} of {progressSnapshot.currentCollectionDays} recent day(s) with House ID records.</strong>
+                                        {" "}Counts were below half the employee’s previous-week median; this is not proof of missed houses.
+                                    </li>
+                                )}
+                                {!progressSnapshot.recurringLongGapDates.length
+                                    && !progressSnapshot.lowCollectionDates.length && (
+                                    <li className="rounded border bg-slate-50 p-3 text-slate-600">
+                                        {overallStatus === "Insufficient Data"
+                                            ? "Insufficient data to determine whether collection gaps or low activity are recurring."
+                                            : "No recurring gap or low-recorded-activity pattern was detected from the available daily records."}
+                                    </li>
+                                )}
+                            </ul>
+                        </section>
+                        <section className="space-y-2">
+                            <h3 className="text-sm font-semibold text-slate-800">Recommended Improvement Focus</h3>
+                            <ol className="list-decimal space-y-2 rounded-lg border bg-slate-50 p-4 pl-8 text-sm text-slate-700">
+                                {recommendations.map((recommendation) => <li key={recommendation}>{recommendation}</li>)}
+                            </ol>
+                        </section>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                        Status reflects this employee’s own prior records, not a company-wide target. A change must exceed 10% from the prior-period value to be labeled improving or worsening; smaller changes are labeled stable. Each measure needs at least three recorded days in both weeks. Incomplete collection logs, route/area changes, and GPS gaps can affect these comparisons; this is a management review aid, not a disciplinary score.
+                    </p>
+                </>
+            )}
+        </section>
+    );
+}
+
 function normalizeGpsFile(records, employeeId) {
     if (!Array.isArray(records) || !records.every((record) =>
         record && record.date && Array.isArray(record.emproute))) {
@@ -721,22 +1462,29 @@ function getTravelCollectionSignals(rows) {
 
 export default function AnalyticsDashboard({visible}) {
     const [summary, setSummary] = useState(null);
-    const [mapData, setMapData] = useState(null);
     const [selectedEmployee, setSelectedEmployee] = useState("");
-    const [selectedMapDate, setSelectedMapDate] = useState("");
+    const [periodMode, setPeriodMode] = useState("all");
+    const [selectedDate, setSelectedDate] = useState("");
+    const [startDate, setStartDate] = useState("");
+    const [endDate, setEndDate] = useState("");
     const [importFiles, setImportFiles] = useState([]);
     const [loading, setLoading] = useState(false);
     const [importing, setImporting] = useState(false);
     const [error, setError] = useState("");
-    const [mapError, setMapError] = useState("");
-    const [mapLoading, setMapLoading] = useState(false);
     const [notice, setNotice] = useState("");
 
     const query = useMemo(() => {
         const params = new URLSearchParams();
         if (selectedEmployee) params.set("vehicle_id", selectedEmployee);
+        if (periodMode === "date" && selectedDate) {
+            params.set("start_date", selectedDate);
+            params.set("end_date", selectedDate);
+        } else if (periodMode === "range") {
+            if (startDate) params.set("start_date", startDate);
+            if (endDate) params.set("end_date", endDate);
+        }
         return params.toString();
-    }, [selectedEmployee]);
+    }, [selectedEmployee, periodMode, selectedDate, startDate, endDate]);
 
     const loadDashboard = async (signal) => {
         setLoading(true);
@@ -760,42 +1508,13 @@ export default function AnalyticsDashboard({visible}) {
         return () => controller.abort();
     }, [query, visible]);
 
-    const availableMapDates = (summary?.daily_performance || []).map((row) => row.date);
+    const availableDates = summary?.available_dates || [];
     useEffect(() => {
-        if (!availableMapDates.length) {
-            setSelectedMapDate("");
-            return;
-        }
-        if (!availableMapDates.includes(selectedMapDate)) {
-            setSelectedMapDate(availableMapDates[availableMapDates.length - 1]);
-        }
-    }, [availableMapDates.join(","), selectedMapDate]);
-
-    useEffect(() => {
-        if (!visible || !selectedMapDate) {
-            setMapData(null);
-            setMapLoading(false);
-            return undefined;
-        }
-        const controller = new AbortController();
-        const params = new URLSearchParams({date: selectedMapDate});
-        if (selectedEmployee) params.set("vehicle_id", selectedEmployee);
-        setMapLoading(true);
-        setMapError("");
-        fetch(`${API_URL}analytics/map?${params}`, {signal: controller.signal})
-            .then(async (response) => {
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.message || `Map request failed (${response.status}).`);
-                setMapData(data);
-            })
-            .catch((requestError) => {
-                if (requestError.name !== "AbortError") setMapError(requestError.message);
-            })
-            .finally(() => {
-                if (!controller.signal.aborted) setMapLoading(false);
-            });
-        return () => controller.abort();
-    }, [selectedEmployee, selectedMapDate, visible]);
+        if (!availableDates.length) return;
+        if (!selectedDate) setSelectedDate(availableDates[availableDates.length - 1]);
+        if (!startDate) setStartDate(availableDates[0]);
+        if (!endDate) setEndDate(availableDates[availableDates.length - 1]);
+    }, [availableDates.join(","), selectedDate, startDate, endDate]);
 
     const importRecords = async () => {
         if (!importFiles.length) {
@@ -824,6 +1543,9 @@ export default function AnalyticsDashboard({visible}) {
                     throw new Error("The JSON file must contain an operational data object or a dated GPS array.");
                 }
                 payload = assignEmployeeId(payload, employeeId);
+                if (entry.weightUnit && payload.routes) {
+                    payload.weight_unit = entry.weightUnit;
+                }
                 const response = await fetch(`${API_URL}analytics/import`, {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
@@ -865,6 +1587,38 @@ export default function AnalyticsDashboard({visible}) {
     const chartRows = (key) => dates.filter((row) => row[key] != null);
     const hasHouseVisitData = Boolean(metrics.house_visits_available);
     const selectedEmployeeLabel = selectedEmployee || "All Employees";
+    const timeRows = summary?.daily_time_performance?.daily || [];
+    const timeByDate = new Map();
+    timeRows.forEach((row) => {
+        const aggregate = timeByDate.get(row.date) || {
+            gps_observed_seconds: null,
+            between_collection_interval_count: 0,
+            total_between_collection_seconds: 0,
+            longest_between_collection_seconds: null,
+        };
+        if (row.gps_observed_seconds != null) {
+            aggregate.gps_observed_seconds =
+                (aggregate.gps_observed_seconds || 0) + row.gps_observed_seconds;
+        }
+        aggregate.between_collection_interval_count +=
+            row.between_collection_interval_count || 0;
+        aggregate.total_between_collection_seconds +=
+            row.total_between_collection_seconds || 0;
+        if (row.longest_between_collection_seconds != null
+            && (aggregate.longest_between_collection_seconds == null
+                || row.longest_between_collection_seconds > aggregate.longest_between_collection_seconds)) {
+            aggregate.longest_between_collection_seconds =
+                row.longest_between_collection_seconds;
+        }
+        timeByDate.set(row.date, aggregate);
+    });
+    timeByDate.forEach((aggregate) => {
+        aggregate.average_between_collection_seconds =
+            aggregate.between_collection_interval_count
+                ? Math.round(aggregate.total_between_collection_seconds
+                    / aggregate.between_collection_interval_count)
+                : null;
+    });
     const houseIdsByDate = new Map();
     (history.reference_ids || []).forEach((reference) => {
         (reference.collection_dates || []).forEach((date) => {
@@ -888,10 +1642,13 @@ export default function AnalyticsDashboard({visible}) {
         recordedToday.forEach((houseId) => updatedMonthHouseIds.add(houseId));
         earlierMonthlyHouseIds.set(month, updatedMonthHouseIds);
     });
-    const timeRows = summary?.daily_time_performance?.daily || [];
     const hasGpsTime = timeRows.some((row) => row.gps_observed_seconds != null);
-    const availableDateCount = summary?.available_dates?.length || 0;
-    const availableDatesLabel = summary
+    const availableDateCount = availableDates.length;
+    const availableDatesLabel = summary && periodMode === "date" && selectedDate
+        ? `Date: ${selectedDate}`
+        : summary && periodMode === "range"
+            ? `Date range: ${startDate || "start"} to ${endDate || "end"}`
+        : summary
         ? `All uploaded dates (${availableDateCount})`
         : loading ? "Loading uploaded dates…" : "No uploaded dates";
 
@@ -915,10 +1672,10 @@ export default function AnalyticsDashboard({visible}) {
                     <div className="mb-4">
                         <h2 className="text-base font-semibold text-slate-900">Choose what to review</h2>
                         <p className="mt-1 text-xs text-slate-500">
-                            All dates in the uploaded data are included. Choose an employee to narrow the results.
+                            All dates are included by default. Choose an employee and, if needed, a single date or date range.
                         </p>
                     </div>
-                    <div className="grid max-w-xl gap-3 sm:grid-cols-2">
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                         <label className="grid gap-1 text-xs font-medium text-slate-600">
                             Employee
                             <select
@@ -934,6 +1691,43 @@ export default function AnalyticsDashboard({visible}) {
                                 ))}
                             </select>
                         </label>
+                        <label className="grid gap-1 text-xs font-medium text-slate-600">
+                            Reporting period
+                            <select className="rounded border bg-white px-3 py-2 text-sm text-slate-800"
+                                value={periodMode} onChange={(event) => setPeriodMode(event.target.value)}>
+                                <option value="all">All available dates</option>
+                                <option value="date">One date</option>
+                                <option value="range">Date range</option>
+                            </select>
+                        </label>
+                        {periodMode === "date" && (
+                            <label className="grid gap-1 text-xs font-medium text-slate-600">
+                                Date
+                                <input type="date" className="rounded border bg-white px-3 py-2 text-sm text-slate-800"
+                                    value={selectedDate}
+                                    min={availableDates[0]}
+                                    max={availableDates[availableDates.length - 1]}
+                                    onChange={(event) => setSelectedDate(event.target.value)}/>
+                            </label>
+                        )}
+                        {periodMode === "range" && (
+                            <>
+                                <label className="grid gap-1 text-xs font-medium text-slate-600">
+                                    Start date
+                                    <input type="date" className="rounded border bg-white px-3 py-2 text-sm text-slate-800"
+                                        value={startDate}
+                                        max={endDate || undefined}
+                                        onChange={(event) => setStartDate(event.target.value)}/>
+                                </label>
+                                <label className="grid gap-1 text-xs font-medium text-slate-600">
+                                    End date
+                                    <input type="date" className="rounded border bg-white px-3 py-2 text-sm text-slate-800"
+                                        value={endDate}
+                                        min={startDate || undefined}
+                                        onChange={(event) => setEndDate(event.target.value)}/>
+                                </label>
+                            </>
+                        )}
                     </div>
                 </section>
 
@@ -944,21 +1738,35 @@ export default function AnalyticsDashboard({visible}) {
                             Select one JSON/TXT export per employee
                             <input type="file" accept=".json,.txt,application/json,text/plain" multiple
                                 onChange={(event) => setImportFiles(
-                                    Array.from(event.target.files || []).map((file) => ({file, employeeId: ""}))
+                                    Array.from(event.target.files || []).map((file) => ({
+                                        file,
+                                        employeeId: "",
+                                        weightUnit: "",
+                                    }))
                                 )}/>
                         </label>
                         {importFiles.map((entry, index) => (
-                            <label key={`${entry.file.name}-${index}`} className="grid max-w-xl gap-1 text-xs text-slate-600 sm:grid-cols-[1fr_0.7fr] sm:items-center">
+                            <div key={`${entry.file.name}-${index}`} className="grid max-w-3xl gap-2 text-xs text-slate-600 sm:grid-cols-[1fr_0.7fr_0.7fr] sm:items-center">
                                 <span className="truncate" title={entry.file.name}>{entry.file.name}</span>
                                 <input className="rounded border px-2 py-1 text-sm" value={entry.employeeId}
                                     onChange={(event) => setImportFiles((current) => current.map((item, itemIndex) =>
                                         itemIndex === index ? {...item, employeeId: event.target.value} : item
                                     ))}
                                     placeholder="Employee ID"/>
-                            </label>
+                                <select className="rounded border bg-white px-2 py-1 text-sm"
+                                    aria-label={`Weight unit for ${entry.file.name}`}
+                                    value={entry.weightUnit}
+                                    onChange={(event) => setImportFiles((current) => current.map((item, itemIndex) =>
+                                        itemIndex === index ? {...item, weightUnit: event.target.value} : item
+                                    ))}>
+                                    <option value="">Weight unit from file</option>
+                                    <option value="kg">Weights are in kilograms</option>
+                                    <option value="tonnes">Weights are in tonnes</option>
+                                </select>
+                            </div>
                         ))}
                         <p className="text-xs text-slate-500">
-                            Each file is imported under its employee ID. Imports merge with existing records. A file should contain data for one employee.
+                            Each file is imported under its employee ID. If the file’s dump records do not specify a unit, choose the correct unit here; values are converted to kilograms. Imports merge with existing records. A file should contain data for one employee.
                         </p>
                         <button className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                             onClick={importRecords} disabled={importing || !importFiles.length}>
@@ -990,13 +1798,17 @@ export default function AnalyticsDashboard({visible}) {
                                     value={metrics.total_distance_km == null ? "Unavailable" : `${formatNumber(metrics.total_distance_km)} km`}
                                     detail="GPS-based estimate"/>
                                 <MetricCard label="Unique houses recorded"
-                                    value={formatNumber(metrics.total_unique_houses_recorded_visited, 0)}
+                                    value={hasHouseVisitData
+                                        ? formatNumber(metrics.total_unique_houses_recorded_visited, 0)
+                                        : "Unavailable"}
                                     detail="House IDs recorded in collection lists"/>
                                 <MetricCard label="Average houses per day"
-                                    value={metrics.average_daily_houses_recorded_visited == null
+                                    value={!hasHouseVisitData || metrics.average_daily_houses_recorded_visited == null
                                         ? "Unavailable"
                                         : formatNumber(metrics.average_daily_houses_recorded_visited, 0)}
-                                    detail={`${metrics.house_collection_days_included || 0} recorded collection day(s)`}/>
+                                    detail={hasHouseVisitData
+                                        ? `${metrics.house_collection_days_included || 0} recorded collection day(s)`
+                                        : "Collection records unavailable"}/>
                                 <MetricCard label="GPS time counted"
                                     value={hasGpsTime
                                         ? formatDuration(timeRows.reduce(
@@ -1009,7 +1821,7 @@ export default function AnalyticsDashboard({visible}) {
 
                         <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                             <div>
-                                <h2 className="text-lg font-semibold text-slate-900">1. Daily Travel Distance</h2>
+                                <h2 className="text-lg font-semibold text-slate-900">1. Distance</h2>
                                 <p className="text-xs text-slate-600">
                                     GPS-based point-to-point distance; it is not road distance. Gaps over 15 minutes and unrealistic jumps are excluded.
                                 </p>
@@ -1038,24 +1850,33 @@ export default function AnalyticsDashboard({visible}) {
 
                         <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                             <div>
-                                <h2 className="text-lg font-semibold text-slate-900">3. Daily House Collection</h2>
+                                <h2 className="text-lg font-semibold text-slate-900">3. Houses Collected</h2>
                                 <p className="text-xs text-slate-600">
                                     As confirmed for this dataset, each collection-list reference ID is a House ID. The same ID is counted once per day, even if it appears in multiple scans.
                                 </p>
                             </div>
                             {hasHouseVisitData ? (
                                 <>
-                                    <div className="grid gap-3 sm:grid-cols-2">
+                                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                                         <MetricCard label="Unique houses recorded visited" value={formatNumber(metrics.total_unique_houses_recorded_visited, 0)}/>
                                         <MetricCard label="Average houses visited per recorded day"
                                             value={formatNumber(metrics.average_daily_houses_recorded_visited, 0)}
                                             detail={`${metrics.house_collection_days_included} day(s) with House IDs recorded`}/>
+                                        <MetricCard label="House IDs recorded on multiple days"
+                                            value={formatNumber(history.collected_multiple_days_count, 0)}
+                                            detail="Repeat records are expected for daily collection"/>
+                                        <MetricCard label="Recorded once"
+                                            value={formatNumber(history.collected_once_count, 0)}
+                                            detail="Known House IDs recorded on one selected-period date"/>
+                                        <MetricCard label="Known IDs with no record in period"
+                                            value={formatNumber(history.houses_without_recorded_visit_count, 0)}
+                                            detail="Known reference/master IDs only; not a complete beat roster"/>
                                     </div>
                                     <TrendChart title="Houses recorded visited by day"
                                         rows={chartRows("houses_recorded_visited")}
                                         valueKey="houses_recorded_visited" color="#0f766e"
                                         emptyMessage="No House IDs were recorded for this selection."/>
-                                    <DataTable headers={["Date", "Houses recorded", "Previously recorded House IDs not recorded today"]}
+                                    <DataTable headers={["Date", "House IDs in list", "Earlier House IDs not in today’s list"]}
                                         rows={dates.map((row) => {
                                             const missing = monthlyMissingHousesByDate.get(row.date);
                                             return (
@@ -1067,10 +1888,14 @@ export default function AnalyticsDashboard({visible}) {
                                                         : formatNumber(row.houses_recorded_visited, 0)}
                                                 </td>
                                                 <td className="py-2">
-                                                    {missing?.baselineCount ? (
-                                                        <div className="max-h-24 max-w-[42rem] overflow-auto rounded-md bg-amber-50 p-2 text-xs text-slate-700">
-                                                            <span className="mb-1 block font-medium text-amber-900">
-                                                                {formatNumber(missing.houseIds.length, 0)} of {formatNumber(missing.baselineCount, 0)} earlier House IDs not recorded
+                                                    {row.houses_recorded_visited == null ? (
+                                                        <span className="text-xs text-slate-500">
+                                                            Unavailable — no House ID records to compare for this date
+                                                        </span>
+                                                    ) : missing?.baselineCount ? (
+                                                        <div className="max-h-24 max-w-[42rem] overflow-auto rounded-md bg-slate-50 p-2 text-xs text-slate-700">
+                                                            <span className="mb-1 block font-medium text-slate-800">
+                                                                {formatNumber(missing.houseIds.length, 0)} of {formatNumber(missing.baselineCount, 0)} earlier House IDs are absent from today’s list
                                                             </span>
                                                             {missing.houseIds.length
                                                                 ? missing.houseIds.join(", ")
@@ -1087,7 +1912,10 @@ export default function AnalyticsDashboard({visible}) {
                                         emptyMessage="No daily records are available in the uploaded data."
                                         minWidth="760px" maxHeight="24rem"/>
                                     <p className="text-xs text-slate-500">
-                                        Each date is compared only with House IDs already recorded on earlier dates in that same calendar month. “Not recorded” does not prove a house was missed; the collection list may be incomplete.
+                                        This is a list comparison, not a missed-house count. Garbage vehicles may revisit the same houses daily, while daily totals and House IDs can vary with the assigned area, route, or collection load.
+                                    </p>
+                                    <p className="text-xs text-slate-500">
+                                        Repeated and once-only counts describe how often House IDs appear across selected-period lists. “Known IDs with no record” is limited to IDs present in the available history/master records; it does not confirm a missed collection.
                                     </p>
                                 </>
                             ) : (
@@ -1097,68 +1925,73 @@ export default function AnalyticsDashboard({visible}) {
                             )}
                         </section>
 
-                        <TravelHouseComparison rows={dates} metrics={metrics} quality={quality}
-                            selectedEmployee={selectedEmployee}/>
-
                         <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                             <div>
-                                <h2 className="text-lg font-semibold text-slate-900">5. Geographic Collection and Movement</h2>
+                                <h2 className="text-lg font-semibold text-slate-900">4. Garbage Collection</h2>
                                 <p className="text-xs text-slate-600">
-                                    View house locations, collection scan locations and GPS movement. The map date controls movement and scan markers; house collection status uses all uploaded dates.
+                                    Weight is shown only when the recorded value is positive and its unit is known. Missing or zero weights are unavailable, not zero waste.
                                 </p>
                             </div>
-                            <label className="grid max-w-sm gap-1 text-xs font-medium text-slate-600">
-                                Map date
-                                <select className="rounded border bg-white px-3 py-2 text-sm text-slate-800"
-                                    value={selectedMapDate}
-                                    onChange={(event) => setSelectedMapDate(event.target.value)}
-                                    disabled={!availableMapDates.length}>
-                                    {!availableMapDates.length && <option value="">No dates available</option>}
-                                    {availableMapDates.map((date) => <option key={date} value={date}>{date}</option>)}
-                                </select>
-                            </label>
-                            {mapLoading && <p className="text-sm text-slate-500">Loading map data…</p>}
-                            {!mapLoading && !availableMapDates.length && (
-                                <p className="rounded border bg-white p-3 text-sm text-slate-600">
-                                    No dates with GPS, collection or house records are available to map for this employee.
+                            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                                <MetricCard label="Dumping trips" value={formatNumber(metrics.dumping_trips, 0)}/>
+                                <MetricCard label="Total garbage weight" value={formatWeight(metrics.total_garbage_weight_kg)}
+                                    detail={metrics.dump_weight_complete ? "All recorded trips have valid weights" : "Unavailable if any trip weight is missing or unverified"}/>
+                                <MetricCard label="Weight from trips with valid measurements" value={formatWeight(metrics.recorded_garbage_weight_kg)}
+                                    detail={metrics.weighted_dump_trips == null
+                                        ? "Valid trip weights unavailable"
+                                        : `${formatNumber(metrics.weighted_dump_trips, 0)} of ${formatNumber(metrics.dumping_trips, 0)} trips have valid weights; ${formatNumber(metrics.unweighted_dump_trips, 0)} unavailable`}/>
+                                <MetricCard label="Average weight per day" value={formatWeight(metrics.average_daily_garbage_weight_kg)}
+                                    detail={`${metrics.weight_days_included || 0} day(s) with usable weight records`}/>
+                                <MetricCard label="Weight per dumping trip" value={formatWeight(metrics.weight_per_dumping_trip_kg)}
+                                    detail="Available only when every recorded trip has a valid weight"/>
+                                <MetricCard label="Weight per recorded house" value={formatWeight(metrics.garbage_weight_per_collected_house_kg)}
+                                    detail="Requires complete trip weights and recorded House IDs"/>
+                                <MetricCard label="Wet waste" value={formatWeight(metrics.wet_waste_weight_kg)}/>
+                                <MetricCard label="Dry waste" value={formatWeight(metrics.dry_waste_weight_kg)}/>
+                            </div>
+                            {!metrics.dump_weight_complete && metrics.recorded_garbage_weight_kg != null && (
+                                <p className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                                    Some recorded dumping trips have no valid weight. The complete total is unavailable; the partial amount above includes only trips with verified positive weights.
                                 </p>
                             )}
-                            {mapError && <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">{mapError}</p>}
-                            {mapData && (
-                                <>
-                                    <p className="text-sm text-slate-700">
-                                            {formatNumber(mapData.house_count, 0)} House ID locations · {formatNumber(mapData.anonymous_house_location_count, 0)} coordinate-only house points · {formatNumber(mapData.unvisited_house_count, 0)} have no collection record · {formatNumber(mapData.ambiguous_house_count, 0)} have an unclear House ID link · {formatNumber(mapData.collection_house_coordinate_mismatches, 0)} House IDs have scan/master coordinate differences · {formatNumber(mapData.collection_location_count, 0)} collection scan locations · {formatNumber(mapData.gps_point_count, 0)} GPS points
-                                            {mapData.unlocated_collection_count > 0
-                                                ? ` · ${formatNumber(mapData.unlocated_collection_count, 0)} collection records have no map coordinates`
-                                                : ""}
-                                    </p>
-                                    <GeographicMap data={mapData}/>
-                                    <p className="text-xs text-amber-800">{mapData.note}</p>
-                                </>
-                            )}
+                            <TrendChart title="Recorded garbage weight by day (kg)"
+                                rows={chartRows("garbage_weight_kg")} valueKey="garbage_weight_kg" color="#d97706"
+                                unit=" kg" emptyMessage="Weight is unavailable because no complete valid weight records were supplied."/>
+                            <DataTable headers={["Date", "Dumping trips", "Total weight", "Wet waste", "Dry waste"]}
+                                rows={dates.filter((row) => row.dumping_trips || row.garbage_weight_kg != null).map((row) => (
+                                    <tr key={row.date} className="border-b last:border-0">
+                                        <td className="py-2 pr-3">{row.date}</td>
+                                        <td className="py-2 pr-3">{formatNumber(row.dumping_trips, 0)}</td>
+                                        <td className="py-2 pr-3">{formatWeight(row.garbage_weight_kg)}</td>
+                                        <td className="py-2 pr-3">{formatWeight(row.wet_weight_kg)}</td>
+                                        <td className="py-2">{formatWeight(row.dry_weight_kg)}</td>
+                                    </tr>
+                                ))}
+                                emptyMessage="No dumping records are available in the uploaded data."
+                                minWidth="620px" maxHeight="20rem"/>
                         </section>
 
                         <details className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                             <summary className="cursor-pointer list-none">
-                                <h2 className="text-lg font-semibold text-slate-900">6. House Collection History</h2>
+                                <h2 className="text-lg font-semibold text-slate-900">House Collection History</h2>
                                 <p className="text-xs text-slate-600">
-                                    Each collection-list reference ID is treated as a House ID. “No record” means that ID was absent from the collection list on those dates; it does not by itself prove a missed visit.
+                                    The collection-list reference ID is the House ID. “No record” means no collection-list entry exists for that House ID on those dates; it does not confirm whether the house was physically missed.
                                 </p>
                             </summary>
                             <div className="mt-3 space-y-3">
                             {hasHouseVisitData ? (
                                 <>
                                     <CollectionDayComparison
-                                        dates={summary.available_dates || []}
+                                        dates={dates.map((row) => row.date)}
                                         references={history.reference_ids || []}
                                     />
                                     <HouseHistoryTable title="House IDs recorded on multiple days"
                                         rows={history.visited_on_multiple_days || []}
                                         showDates
                                         emptyMessage="No House IDs appear on multiple selected days."/>
-                                    <HouseHistoryTable title="Known House IDs with no record in uploaded data"
+                                    <HouseHistoryTable title="Known House IDs with no record in selected period"
                                         rows={(history.houses_without_recorded_visit || []).map((row) => ({...row, visit_days: 0}))}
-                                        emptyMessage="Every House ID found in the uploaded history has a collection record."/>
+                                        emptyMessage="Every known House ID was recorded in this period."/>
                                     {history.houses_without_recorded_visit?.length >= 500 && (
                                         <p className="text-xs text-slate-500">
                                             Showing up to 500 known House IDs without a record.
@@ -1233,44 +2066,23 @@ export default function AnalyticsDashboard({visible}) {
                             </div>
                         </details>
 
-                        <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                            <div>
-                                <h2 className="text-lg font-semibold text-slate-900">7. Garbage Dumping Performance</h2>
-                                <p className="text-xs text-slate-600">
-                                    Weight is shown only when the recorded value is positive and its unit is known. Missing or zero weights are unavailable, not zero waste.
-                                </p>
-                            </div>
-                            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                                <MetricCard label="Dumping trips" value={formatNumber(metrics.dumping_trips, 0)}/>
-                                <MetricCard label="Total garbage weight" value={formatWeight(metrics.total_garbage_weight_kg)}
-                                    detail={metrics.dump_weight_complete ? "All recorded trips have valid weights" : "Unavailable if any trip weight is missing or unverified"}/>
-                                <MetricCard label="Average weight per day" value={formatWeight(metrics.average_daily_garbage_weight_kg)}
-                                    detail={`${metrics.weight_days_included || 0} day(s) with usable weight records`}/>
-                                <MetricCard label="Wet waste" value={formatWeight(metrics.wet_waste_weight_kg)}/>
-                                <MetricCard label="Dry waste" value={formatWeight(metrics.dry_waste_weight_kg)}/>
-                            </div>
-                            <TrendChart title="Recorded garbage weight by day (kg)"
-                                rows={chartRows("garbage_weight_kg")} valueKey="garbage_weight_kg" color="#d97706"
-                                unit=" kg" emptyMessage="Weight is unavailable because no complete valid weight records were supplied."/>
-                            <DataTable headers={["Date", "Dumping trips", "Total weight", "Wet waste", "Dry waste"]}
-                                rows={dates.filter((row) => row.dumping_trips || row.garbage_weight_kg != null).map((row) => (
-                                    <tr key={row.date} className="border-b last:border-0">
-                                        <td className="py-2 pr-3">{row.date}</td>
-                                        <td className="py-2 pr-3">{formatNumber(row.dumping_trips, 0)}</td>
-                                        <td className="py-2 pr-3">{formatWeight(row.garbage_weight_kg)}</td>
-                                        <td className="py-2 pr-3">{formatWeight(row.wet_weight_kg)}</td>
-                                        <td className="py-2">{formatWeight(row.dry_weight_kg)}</td>
-                                    </tr>
-                                ))}
-                                emptyMessage="No dumping records are available in the uploaded data."
-                                minWidth="620px" maxHeight="20rem"/>
-                        </section>
+                        <TravelHouseComparison rows={dates} metrics={metrics} quality={quality}
+                            selectedEmployee={selectedEmployee} timeByDate={timeByDate}/>
+                        <CollectionGapAnalysis data={summary.daily_time_performance}
+                            rows={dates} timeByDate={timeByDate}/>
+                        <DailyPerformanceSummary rows={dates} timeByDate={timeByDate}/>
 
                         <p className="text-xs text-slate-500">
                             Showing {selectedEmployeeLabel}. Averages use days with valid records. {formatNumber(metrics.invalid_gps_intervals, 0)} invalid GPS intervals were excluded. House visits use House IDs from collection lists or explicit collection records; GPS movement alone is not counted as a visit.
                         </p>
                         <ImprovementSuggestions rows={dates} metrics={metrics} quality={quality}
                             selectedEmployee={selectedEmployee}/>
+                        <EmployeeProgressAnalysis
+                            rows={dates}
+                            timeByDate={timeByDate}
+                            history={history}
+                            selectedEmployee={selectedEmployee}
+                        />
                     </>
                 )}
             </div>
