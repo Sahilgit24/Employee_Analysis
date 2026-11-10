@@ -1463,6 +1463,7 @@ function getTravelCollectionSignals(rows) {
 export default function AnalyticsDashboard({visible}) {
     const [summary, setSummary] = useState(null);
     const [selectedEmployee, setSelectedEmployee] = useState("");
+    const [activeAnalyticsTab, setActiveAnalyticsTab] = useState("distance");
     const [periodMode, setPeriodMode] = useState("all");
     const [selectedDate, setSelectedDate] = useState("");
     const [startDate, setStartDate] = useState("");
@@ -1651,6 +1652,187 @@ export default function AnalyticsDashboard({visible}) {
         : summary
         ? `All uploaded dates (${availableDateCount})`
         : loading ? "Loading uploaded dates…" : "No uploaded dates";
+    const analyticsTabs = [
+        {id: "distance", label: "Distance"},
+        {id: "time", label: "Time"},
+        {id: "houses", label: "Houses Collected"},
+        {id: "garbage", label: "Garbage"},
+        {id: "efficiency", label: "Collection Efficiency"},
+        {id: "progress", label: "Progress & All"},
+    ];
+    const exportFilename = (extension) => {
+        const employee = selectedEmployee.trim().replace(/[^a-z0-9_-]+/gi, "_");
+        const period = periodMode === "date"
+            ? selectedDate
+            : periodMode === "range"
+                ? `${startDate || "start"}_to_${endDate || "end"}`
+                : "all_dates";
+        return `employee_analytics_${employee}_${period}.${extension}`;
+    };
+    const exportDailyRows = dates.map((row) => {
+        const time = timeByDate.get(row.date) || {};
+        return {
+            Date: row.date,
+            "Distance (km)": row.distance_km ?? "Unavailable",
+            "GPS observed time (seconds)": row.gps_observed_seconds ?? "Unavailable",
+            "GPS points": row.gps_points ?? "Unavailable",
+            "Houses recorded": row.houses_recorded_visited ?? "Unavailable",
+            "Collection references": row.unique_collection_references ?? "Unavailable",
+            "Dumping trips": row.dumping_trips ?? "Unavailable",
+            "Garbage weight (kg)": row.garbage_weight_kg ?? "Unavailable",
+            "Wet weight (kg)": row.wet_weight_kg ?? "Unavailable",
+            "Dry weight (kg)": row.dry_weight_kg ?? "Unavailable",
+            "House collection intervals": time.between_collection_interval_count ?? 0,
+            "Average collection interval (seconds)": time.average_between_collection_seconds ?? "Unavailable",
+            "Longest collection interval (seconds)": time.longest_between_collection_seconds ?? "Unavailable",
+        };
+    });
+    const exportSummaryRows = [
+        ["Employee", selectedEmployee],
+        ["Reporting period", availableDatesLabel],
+        ["Report generated", new Date().toLocaleString()],
+        [],
+        ["Metric", "Value"],
+        ["Total distance (km)", metrics.total_distance_km ?? "Unavailable"],
+        ["Average distance per GPS day (km)", metrics.average_daily_distance_km ?? "Unavailable"],
+        ["Unique houses recorded", metrics.total_unique_houses_recorded_visited ?? "Unavailable"],
+        ["Average houses per collection day", metrics.average_daily_houses_recorded_visited ?? "Unavailable"],
+        ["Dumping trips", metrics.dumping_trips ?? "Unavailable"],
+        ["Complete garbage weight (kg)", metrics.total_garbage_weight_kg ?? "Unavailable"],
+        ["Valid measured garbage weight (kg)", metrics.recorded_garbage_weight_kg ?? "Unavailable"],
+        ["Wet waste (kg)", metrics.wet_waste_weight_kg ?? "Unavailable"],
+        ["Dry waste (kg)", metrics.dry_waste_weight_kg ?? "Unavailable"],
+        ["GPS observed time (seconds)", hasGpsTime
+            ? timeRows.reduce((total, row) => total + (row.gps_observed_seconds || 0), 0)
+            : "Unavailable"],
+        ["Collection intervals", summary?.daily_time_performance?.total_interval_count ?? "Unavailable"],
+        ["Average collection interval (seconds)", summary?.daily_time_performance?.average_between_collection_seconds ?? "Unavailable"],
+        ["Longest collection interval (seconds)", summary?.daily_time_performance?.longest_between_collection_seconds ?? "Unavailable"],
+        ["Invalid GPS intervals excluded", metrics.invalid_gps_intervals ?? 0],
+        [],
+        ["Data notes", "House IDs and weights reflect recorded source data. GPS distance is point-to-point, not road distance. Missing values are shown as Unavailable."],
+    ];
+    const exportHouseRows = (history.reference_ids || []).map((reference) => ({
+        "House ID": reference.house_id,
+        "Recorded on (dates)": (reference.collection_dates || []).join(", "),
+        "Recorded days": (reference.collection_dates || []).length,
+    }));
+    const exportIntervalRows = (summary?.daily_time_performance?.intervals || []).map((interval) => ({
+        Date: interval.date,
+        "From House ID": interval.from_house_id,
+        "To House ID": interval.to_house_id,
+        "From timestamp": interval.from_timestamp,
+        "To timestamp": interval.to_timestamp,
+        "Elapsed seconds": interval.duration_seconds,
+    }));
+    const totalGpsObservedSeconds = timeRows.reduce(
+        (total, row) => total + (row.gps_observed_seconds || 0), 0
+    );
+    const housesPerKm = (
+        metrics.house_visits_available && metrics.total_distance_km > 0
+            ? metrics.total_unique_houses_recorded_visited / metrics.total_distance_km
+            : null
+    );
+    const housesPerHour = (
+        metrics.house_visits_available && totalGpsObservedSeconds > 0
+            ? metrics.total_unique_houses_recorded_visited
+                / (totalGpsObservedSeconds / 3600)
+            : null
+    );
+    const additionalSummaryRows = [
+        ["Distance per recorded house (km)", metrics.distance_per_recorded_house_km ?? "Unavailable"],
+        ["Houses per GPS km", housesPerKm == null ? "Unavailable" : Number(housesPerKm.toFixed(2))],
+        ["Houses per GPS-observed hour", housesPerHour == null ? "Unavailable" : Number(housesPerHour.toFixed(1))],
+        ["Average weight per dumping trip (kg)", metrics.average_garbage_weight_per_dumping_trip_kg ?? "Unavailable"],
+        ["Average daily garbage weight (kg)", metrics.average_daily_garbage_weight_kg ?? "Unavailable"],
+        ["Weight per recorded house (kg)", metrics.garbage_weight_per_collected_house_kg ?? "Unavailable"],
+        ["Dump weight complete", metrics.dump_weight_complete ? "Yes" : "No"],
+        ["Trips with valid weights", metrics.weighted_dump_trips ?? "Unavailable"],
+        ["Trips without valid weights", metrics.unweighted_dump_trips ?? "Unavailable"],
+        ["Data note", "Collection-efficiency ratios are descriptive, not employee-efficiency scores. GPS-observed time is not shift time."],
+    ];
+    const downloadExcel = async () => {
+        try {
+            const XLSX = await import("xlsx");
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(
+                workbook,
+                XLSX.utils.aoa_to_sheet([...exportSummaryRows, ...additionalSummaryRows]),
+                "Summary",
+            );
+            XLSX.utils.book_append_sheet(
+                workbook,
+                XLSX.utils.json_to_sheet(exportDailyRows),
+                "Daily Details",
+            );
+            XLSX.utils.book_append_sheet(
+                workbook,
+                XLSX.utils.json_to_sheet(exportHouseRows),
+                "House ID History",
+            );
+            XLSX.utils.book_append_sheet(
+                workbook,
+                XLSX.utils.json_to_sheet(exportIntervalRows),
+                "Collection Intervals",
+            );
+            XLSX.writeFile(workbook, exportFilename("xlsx"));
+        } catch (exportError) {
+            setError(`Could not create the Excel report: ${exportError.message}`);
+        }
+    };
+    const downloadPdf = () => {
+        const printWindow = window.open("", "_blank");
+        if (!printWindow) {
+            setError("The PDF report window was blocked. Allow pop-ups for this site and try again.");
+            return;
+        }
+        printWindow.opener = null;
+        const escapeHtml = (value) => String(value ?? "Unavailable").replace(/[&<>"']/g, (character) => ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+        })[character]);
+        const summaryHtml = [...exportSummaryRows, ...additionalSummaryRows]
+            .filter((row) => row.length === 2)
+            .map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`)
+            .join("");
+        const dailyHeaders = Object.keys(exportDailyRows[0] || {});
+        const dailyHtml = exportDailyRows.map((row) =>
+            `<tr>${dailyHeaders.map((header) => `<td>${escapeHtml(row[header])}</td>`).join("")}</tr>`
+        ).join("");
+        const houseHtml = exportHouseRows.map((row) =>
+            `<tr><td>${escapeHtml(row["House ID"])}</td><td>${escapeHtml(row["Recorded on (dates)"])}</td><td>${escapeHtml(row["Recorded days"])}</td></tr>`
+        ).join("");
+        const intervalHeaders = Object.keys(exportIntervalRows[0] || {});
+        const intervalHtml = exportIntervalRows.map((row) =>
+            `<tr>${intervalHeaders.map((header) => `<td>${escapeHtml(row[header])}</td>`).join("")}</tr>`
+        ).join("");
+        const title = `Employee Analytics — ${selectedEmployee}`;
+        printWindow.document.write(`<!doctype html>
+            <html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+            <style>
+                body{font:12px Arial,sans-serif;color:#172033;margin:28px}
+                h1{font-size:22px;margin:0 0 6px}h2{font-size:16px;margin:24px 0 8px}
+                p{color:#475569}.meta{margin-bottom:20px}
+                table{width:100%;border-collapse:collapse;margin:8px 0 18px}
+                th,td{border:1px solid #cbd5e1;padding:6px;text-align:left;vertical-align:top}
+                th{background:#f1f5f9}.note{font-size:10px;color:#475569}
+                @media print{body{margin:12mm}thead{display:table-header-group}tr{break-inside:avoid}}
+            </style></head><body>
+            <h1>${escapeHtml(title)}</h1>
+            <p class="meta">Reporting period: ${escapeHtml(availableDatesLabel)}<br>Generated: ${escapeHtml(new Date().toLocaleString())}</p>
+            <h2>Performance summary</h2><table><tbody>${summaryHtml}</tbody></table>
+            <h2>Daily analytics</h2><table><thead><tr>${dailyHeaders.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${dailyHtml || `<tr><td colspan="${dailyHeaders.length || 1}">No daily records available.</td></tr>`}</tbody></table>
+            <h2>House ID history</h2><table><thead><tr><th>House ID</th><th>Recorded dates</th><th>Recorded days</th></tr></thead><tbody>${houseHtml || "<tr><td colspan='3'>No House ID history available.</td></tr>"}</tbody></table>
+            <h2>Collection intervals${summary?.daily_time_performance?.intervals_truncated ? " (first 2,000)" : ""}</h2><table><thead><tr>${intervalHeaders.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${intervalHtml || `<tr><td colspan="${intervalHeaders.length || 1}">No timestamped collection intervals available.</td></tr>`}</tbody></table>
+            <p class="note">House ID absence does not prove a missed collection. GPS distance is point-to-point, not road distance. Collection intervals are elapsed time between timestamped House IDs and do not prove wasted time. Missing source values are shown as Unavailable.</p>
+            </body></html>`);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.setTimeout(() => printWindow.print(), 300);
+    };
 
     return (
         <div className="h-full overflow-y-auto bg-slate-50 p-4 sm:p-6">
@@ -1729,6 +1911,27 @@ export default function AnalyticsDashboard({visible}) {
                             </>
                         )}
                     </div>
+                    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
+                        <button
+                            type="button"
+                            onClick={downloadPdf}
+                            disabled={!selectedEmployee || !summary || loading}
+                            className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            Export PDF
+                        </button>
+                        <button
+                            type="button"
+                            onClick={downloadExcel}
+                            disabled={!selectedEmployee || !summary || loading}
+                            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            Download Excel
+                        </button>
+                        <span className="text-xs text-slate-500">
+                            Select one employee to export. PDF opens the print dialog; choose “Save as PDF”.
+                        </span>
+                    </div>
                 </section>
 
                 <details className="rounded-lg border bg-white p-4">
@@ -1786,6 +1989,54 @@ export default function AnalyticsDashboard({visible}) {
 
                 {summary?.daily_summary && (
                     <>
+                        <nav
+                            aria-label="Analytics sections"
+                            className="sticky top-0 z-20 rounded-xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur"
+                        >
+                            <div className="flex gap-2 overflow-x-auto" role="tablist" aria-label="Performance analytics">
+                                {analyticsTabs.map((tab) => (
+                                    <button
+                                        key={tab.id}
+                                        id={`analytics-tab-${tab.id}`}
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={activeAnalyticsTab === tab.id}
+                                        aria-controls={`analytics-panel-${tab.id}`}
+                                        tabIndex={activeAnalyticsTab === tab.id ? 0 : -1}
+                                        onClick={() => setActiveAnalyticsTab(tab.id)}
+                                        onKeyDown={(event) => {
+                                            const currentIndex = analyticsTabs.findIndex((item) => item.id === tab.id);
+                                            let nextIndex = currentIndex;
+                                            if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % analyticsTabs.length;
+                                            if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + analyticsTabs.length) % analyticsTabs.length;
+                                            if (event.key === "Home") nextIndex = 0;
+                                            if (event.key === "End") nextIndex = analyticsTabs.length - 1;
+                                            if (nextIndex !== currentIndex) {
+                                                event.preventDefault();
+                                                const nextTab = analyticsTabs[nextIndex];
+                                                setActiveAnalyticsTab(nextTab.id);
+                                                document.getElementById(`analytics-tab-${nextTab.id}`)?.focus();
+                                            }
+                                        }}
+                                        className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                                            activeAnalyticsTab === tab.id
+                                                ? "bg-blue-700 text-white shadow-sm"
+                                                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                                        }`}
+                                    >
+                                        {tab.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </nav>
+
+                        <div
+                            id={`analytics-panel-${activeAnalyticsTab}`}
+                            role="tabpanel"
+                            aria-labelledby={`analytics-tab-${activeAnalyticsTab}`}
+                            className="space-y-5"
+                        >
+                        {activeAnalyticsTab === "progress" && (
                         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                             <div className="mb-4">
                                 <h2 className="text-base font-semibold text-slate-900">At a glance</h2>
@@ -1818,7 +2069,9 @@ export default function AnalyticsDashboard({visible}) {
                                     detail="Only valid GPS intervals are included"/>
                             </div>
                         </section>
+                        )}
 
+                        {activeAnalyticsTab === "distance" && (
                         <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                             <div>
                                 <h2 className="text-lg font-semibold text-slate-900">1. Distance</h2>
@@ -1845,9 +2098,13 @@ export default function AnalyticsDashboard({visible}) {
                                 emptyMessage="No daily records are available in the uploaded data."
                                 minWidth="360px" maxHeight="20rem"/>
                         </section>
+                        )}
 
+                        {activeAnalyticsTab === "time" && (
                         <TimeAnalysis data={summary.daily_time_performance}/>
+                        )}
 
+                        {activeAnalyticsTab === "houses" && (
                         <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                             <div>
                                 <h2 className="text-lg font-semibold text-slate-900">3. Houses Collected</h2>
@@ -1924,7 +2181,9 @@ export default function AnalyticsDashboard({visible}) {
                                 </p>
                             )}
                         </section>
+                        )}
 
+                        {activeAnalyticsTab === "garbage" && (
                         <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                             <div>
                                 <h2 className="text-lg font-semibold text-slate-900">4. Garbage Collection</h2>
@@ -1970,7 +2229,9 @@ export default function AnalyticsDashboard({visible}) {
                                 emptyMessage="No dumping records are available in the uploaded data."
                                 minWidth="620px" maxHeight="20rem"/>
                         </section>
+                        )}
 
+                        {activeAnalyticsTab === "houses" && (
                         <details className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                             <summary className="cursor-pointer list-none">
                                 <h2 className="text-lg font-semibold text-slate-900">House Collection History</h2>
@@ -2065,11 +2326,18 @@ export default function AnalyticsDashboard({visible}) {
                             </section>
                             </div>
                         </details>
+                        )}
 
+                        {activeAnalyticsTab === "efficiency" && (
                         <TravelHouseComparison rows={dates} metrics={metrics} quality={quality}
                             selectedEmployee={selectedEmployee} timeByDate={timeByDate}/>
+                        )}
+                        {activeAnalyticsTab === "time" && (
                         <CollectionGapAnalysis data={summary.daily_time_performance}
                             rows={dates} timeByDate={timeByDate}/>
+                        )}
+                        {activeAnalyticsTab === "progress" && (
+                        <>
                         <DailyPerformanceSummary rows={dates} timeByDate={timeByDate}/>
 
                         <p className="text-xs text-slate-500">
@@ -2083,6 +2351,9 @@ export default function AnalyticsDashboard({visible}) {
                             history={history}
                             selectedEmployee={selectedEmployee}
                         />
+                        </>
+                        )}
+                        </div>
                     </>
                 )}
             </div>
